@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pm-chaser-mcp
+  namespace: pm-chaser
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pm-chaser-mcp
+  template:
+    metadata:
+      labels:
+        app: pm-chaser-mcp
+    spec:
+      containers:
+        - name: pm-chaser-mcp
+          image: pm-chaser-mcp:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: pm-chaser-secrets
+            - configMapRef:
+                name: pm-chaser-config
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pm-chaser-data

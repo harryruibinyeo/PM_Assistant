@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local data — SQLite DB, Telegram token, any real secrets
+server/*.db
+server/*.db-journal
+.env
+*.env
+!.env.example
+
+# Kubernetes secrets with real values (only the .example stays tracked)
+k8s/secret.yaml
+
+# OS / editor noise
+.DS_Store
+.vscode/

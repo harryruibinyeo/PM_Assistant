@@ -1,0 +1,16 @@
+# type: LoadBalancer — not NodePort. Proven in Step 2: under Docker Desktop's
+# "kind"-based Kubernetes, NodePort is never exposed to the Mac at all, but a
+# LoadBalancer service gets an IP that Odysseus's docker-compose container
+# CAN reach directly (both live in Docker Desktop's one shared internal VM).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pm-chaser-mcp
+  namespace: pm-chaser
+spec:
+  type: LoadBalancer
+  selector:
+    app: pm-chaser-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000

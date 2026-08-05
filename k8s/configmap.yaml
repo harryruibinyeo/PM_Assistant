@@ -1,0 +1,11 @@
+# Non-secret settings. Skipped in Step 5 because there was genuinely nothing
+# to put here — the chase interval belongs to Odysseus's scheduled job, not to
+# this service. The timezone fix gave it a real reason to exist: deadlines
+# typed without an offset ("Friday 5pm") are interpreted in this zone.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pm-chaser-config
+  namespace: pm-chaser
+data:
+  PM_CHASER_TZ: "Asia/Singapore"

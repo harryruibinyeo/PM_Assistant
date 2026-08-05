@@ -1,0 +1,4 @@
+mcp
+sqlalchemy
+httpx2
+python-dotenv
