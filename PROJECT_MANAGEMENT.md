@@ -292,3 +292,48 @@ Nothing there is templated. It named the task, turned `hours_until_deadline: -4.
 ### Operational requirements
 
 The system runs unattended, but depends on all of these being up: **LM Studio** with the model loaded (it was silently unloaded at one point, and every run simply failed), **Docker Desktop**, the **Kubernetes cluster**, and the **Odysseus containers**. If `pm-chaser` code changes, the image must be rebuilt and re-imported into the cluster by hand — there is no registry.
+
+---
+
+## 2026-08-05 (later) — Separating the PM from the employee, and one-tap onboarding
+
+Until now a single person was registered as both manager and task owner, which made the digest and the chase indistinguishable in testing. Restructured to two real people on two real Telegram accounts:
+
+- **Jeffrey** — `role=manager`, linked to the account that created the bot. Receives digests and escalations. Assigns work.
+- **Henry** — `role=team_member`, linked to a separate personal account. Owns the tasks and gets chased.
+
+**Why two accounts are genuinely required:** `Person.telegram_chat_id` is unique, because incoming messages are matched to a person *by* their chat id. One Telegram account can therefore only ever be one person in the system — sharing it would make replies unattributable. (If only one account had been available, the workable fallback was to link the employee and leave the manager unlinked, reading the digest from the Odysseus run output instead.)
+
+**Added Telegram deep links.** Onboarding previously meant the PM relaying a code out-of-band — "message @pmchaser_… and type /start A7K2QX". `register_person`, `list_people` and the chase plan's `unreachable` list now also return a `link_url` of the form `https://t.me/<bot>?start=<code>`. Tapping it opens the bot and sends the code automatically, so the PM pastes one link instead of explaining a procedure. The bot's username is read from Telegram's `getMe` and cached rather than configured, so it cannot drift out of sync with the token in use.
+
+**Some out-of-band first contact is unavoidable**, and worth understanding rather than trying to engineer away: Telegram forbids a bot from messaging anyone who has not messaged it first. The person must always initiate. The deep link reduces that to a single tap; it cannot remove it.
+
+**Correction to an earlier claim in this document.** It was previously stated that reconnecting the MCP server in Odysseus is only needed when the *tool list* changes. That is wrong, and it cost a confusing failed run: the MCP connection is a live session bound to a specific pod, so **any pod restart orphans it**, schema change or not. The symptom is clean at least — the agent reported *"the pm-chaser MCP server is returning 'Session terminated' on every call"* and said what to do about it, rather than failing silently. **After every `kubectl rollout restart`, click Reconnect in Odysseus → Settings → Integrations → MCP.**
+
+**Verified with the new setup:** a chase run messaged **Henry only** (chat `809489685`), about the single most overdue task; tasks #2 and #3 were correctly left alone by the one-task-per-person rule; **Jeffrey received nothing**. The message Qwen composed — *"it's about 1 day overdue (deadline was yesterday evening)"* — turned `-26.0` hours into both a duration and a wall-clock reference, using the local-time field rather than reciting a number.
+
+**Known ordering detail:** `get_digest_data()` does not poll Telegram — that is the chase run's job. So the digest reflects task state as of the last chase run, which is at most 30 minutes stale. Fine in practice, but worth knowing when testing the two in sequence: run the chase first if you want a reply reflected in the digest.
+
+**PM task entry via Odysseus chat: verified working.** The open worry was that chat's 71-tool surface — the environment where the chase run originally failed — would make task creation unreliable too. It does not: *"Create a task for Henry to review the vendor SOW, due Friday 5pm. High priority."* produced a correctly assigned, correctly prioritised task due **Friday 07 Aug 17:00 local**. That confirms the earlier reasoning: the big tool surface breaks *multi-step procedures*, not single one-shot commands. It also confirms the timezone pitfall in the Skill is doing its job — the model sent the deadline without an offset and the server read it as local time, rather than the model "helpfully" converting to UTC first and landing it at 1am Saturday.
+
+---
+
+## 2026-08-05 (later still) — Blocked tasks go to the manager, not back to the employee
+
+A gap surfaced from watching real use rather than from testing. Henry replied that the vendor contract was *"blocked, problems with finance, will need two more days"*, which correctly set the task to `blocked`. But its deadline was still in the past, so it stayed permanently overdue — meaning the bot would keep chasing him every four hours about something he had already explained and could not fix.
+
+Three options were considered: chase blocked tasks far less often; stop chasing them and surface them to the manager instead; or let the agent extend the deadline when someone asks. **The third was rejected on principle — moving a deadline is the manager's call, not the employee's and certainly not the bot's.** The second was chosen: a blocker is *information for the manager*, not a reason to nag the person who is stuck.
+
+**What changed:**
+- `get_chase_plan()` now excludes any task with status `blocked`, recording it in `skipped` with the reason *"blocked — needs the manager to unblock or reschedule, not the owner to be chased again"*.
+- `get_digest_data()` gained a `blocked_needing_decision` list carrying, for each: the owner, the deadline, whether it has **already passed**, and `reason_given` — the person's own words.
+- The digest Skill now instructs the agent to name who is blocked, quote their reason, and **recommend a concrete next step** (extend, reassign, or clear the blocker), calling out explicitly when the deadline has already gone.
+
+**A related gap fixed at the same time:** the digest Skill already said "name the specific blockers people reported", but `get_digest_data()` never returned any reply text — so the agent literally could not comply. `_task_dict` now includes `last_reply_text` and `last_reply_at_local`, being the most recent thing a person actually said about a task, whether it answered a ping or arrived unprompted.
+
+**Verified.** Before the change, the digest said only *"the vendor contract task is overdue and blocked at 0% progress"*. After it:
+
+> **Blocked** — Henry's vendor contract task is overdue and blocked by finance issues; needs a decision on deadline extension or reassignment.
+> **At risk** — Henry's Q3 board deck is due in ~5 hours with 0% progress.
+
+The second line is worth noting: **nothing in the data marks that deck as "at risk"** — there is no such flag, threshold or rule. The model saw "due in 5 hours, 0% progress" and made the judgement itself. That is precisely the call deliberately *not* hardcoded into `get_digest_data()`, and it is doing real work.

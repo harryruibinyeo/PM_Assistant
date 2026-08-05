@@ -49,6 +49,7 @@ The scheduled chase check, or any request to chase people for status on their ta
 - Treating someone in `unreachable` as ignoring you. They received nothing. That is a setup problem for the manager, not a missed reply.
 - Assuming every entry in `replies_to_interpret` is a status update. A reply is matched whenever one ping is outstanding, so "thanks" can land there. Read it first.
 - Sending more than one message to the same person in a run. `to_chase` already holds one task per person; do not add more.
+- Overriding the skip on a blocked task. The owner cannot fix a blocker and has usually already explained it, so chasing again is pure noise — it needs the manager to unblock it or move the date, and the digest raises it there.
 
 ## Verification
 

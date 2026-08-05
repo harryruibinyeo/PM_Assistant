@@ -22,11 +22,12 @@ The scheduled daily digest, or any request for a summary of where tasks stand. T
 ## Procedure
 
 1. Execute these steps by actually calling the tools. Never write out what you are about to call — emit the tool call itself.
-2. Call get_digest_data(). One call gives you the manager to send to, every active task with its state, who has stopped replying, and who never linked Telegram.
-3. Decide what actually matters. Lead with what the manager must act on: overdue work, anything at risk of slipping, people who have stopped responding, and anyone unreachable. Then note briefly what is on track.
-4. Write it as short readable prose, not a table or a data dump. Name the specific blockers people reported rather than saying "some tasks are blocked".
-5. If nothing needs attention, say so in one line. A short digest is a good digest.
-6. Send it with telegram_send_message(manager_name, digest) and NO task_id.
+2. Call get_digest_data(). One call gives you the manager to send to, every active task with its state, anything blocked and awaiting a decision, who has stopped replying, and who never linked Telegram.
+3. Decide what actually matters. Lead with what the manager must act on: anything in `blocked_needing_decision`, then overdue work, anything at risk of slipping, people who have stopped responding, and anyone unreachable. Then note briefly what is on track.
+4. For each item in `blocked_needing_decision`, name who is blocked and what they said (`reason_given`), then recommend a concrete next step — extend the deadline, reassign it, or clear the blocker. These are no longer being chased, so they sit untouched until the manager acts. Say so plainly when `deadline_already_passed` is true: a blocked task whose deadline has gone will stay stuck until the date is moved.
+5. Write it as short readable prose, not a table or a data dump. Quote the specific blockers people reported rather than saying "some tasks are blocked".
+6. If nothing needs attention, say so in one line. A short digest is a good digest.
+7. Send it with telegram_send_message(manager_name, digest) and NO task_id.
 
 ## Pitfalls
 

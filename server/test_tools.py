@@ -255,6 +255,20 @@ def main():
     plan = tools.get_chase_plan()
     check("replies are surfaced for the agent to interpret", any(r["task_id"] == t_late for r in plan["replies_to_interpret"]))
 
+    # ── blocked tasks: not chased, surfaced to the manager instead ────────
+    tools.update_task(t_late, status="blocked")
+    plan = tools.get_chase_plan(min_hours_between_pings=0)
+    check("a blocked task is not chased", t_late not in [c["task_id"] for c in plan["to_chase"]])
+    check("...and the reason says it needs the manager",
+          any(s["task_id"] == t_late and "manager" in s["reason"] for s in plan["skipped"]))
+
+    d = tools.get_digest_data()
+    bl = next((b for b in d["blocked_needing_decision"] if b["task_id"] == t_late), None)
+    check("the digest surfaces it for a decision", bl is not None)
+    check("...carrying the owner's own words", bl and bl["reason_given"] == "still blocked on procurement")
+    check("...and flagging that the deadline already passed", bl and bl["deadline_already_passed"] is True)
+    tools.update_task(t_late, status="in_progress")
+
     # ── get_digest_data ───────────────────────────────────────────────────
     d = tools.get_digest_data()
     check("digest looks the manager up rather than guessing", d["manager_name"] == "Bob")

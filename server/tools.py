@@ -120,6 +120,11 @@ def _person_dict(session, person: Person) -> dict:
         "is_linked": bool(person.telegram_chat_id),
         # Only useful while still unlinked — it's how they complete linking.
         "link_code": person.link_code if not person.telegram_chat_id else None,
+        "link_url": (
+            telegram_client.build_link_url(person.link_code)
+            if not person.telegram_chat_id
+            else None
+        ),
         "open_task_count": open_count,
     }
 
@@ -141,6 +146,13 @@ def _task_dict(session, task: Task, now: datetime | None = None) -> dict:
             break
         unanswered_streak += 1
 
+    # The most recent thing this person actually said about the task, whether
+    # it answered a ping or arrived unprompted. The digest needs this to quote
+    # real blockers instead of reporting "some tasks are blocked".
+    answered = [c for c in check_ins if c.reply_text]
+    answered.sort(key=lambda c: c.reply_received_at or datetime.min, reverse=True)
+    last_reply = answered[0] if answered else None
+
     return {
         "task_id": task.id,
         "title": task.title,
@@ -160,6 +172,8 @@ def _task_dict(session, task: Task, now: datetime | None = None) -> dict:
         "last_checkin_answered": bool(last.reply_text) if last else None,
         "unanswered_checkin_count": unanswered_streak,
         "total_checkins": len(sent),
+        "last_reply_text": last_reply.reply_text if last_reply else None,
+        "last_reply_at_local": _iso_local(last_reply.reply_received_at) if last_reply else None,
     }
 
 
@@ -370,12 +384,18 @@ def register_person(
         )
         session.add(person)
         session.flush()
+        link_url = telegram_client.build_link_url(link_code)
         return {
             "person_id": person.id,
             "name": person.name,
             "role": person.role,
             "link_code": link_code,
-            "instructions": f"Ask {person.name} to send /start {link_code} to the bot.",
+            "link_url": link_url,
+            "instructions": (
+                f"Send {person.name} this link and ask them to tap it: {link_url}"
+                if link_url
+                else f"Ask {person.name} to send /start {link_code} to the bot."
+            ),
         }
 
 
@@ -779,7 +799,12 @@ def get_chase_plan(
                 if owner is not None:
                     entry = unreachable.setdefault(
                         owner.name,
-                        {"name": owner.name, "link_code": owner.link_code, "task_count": 0},
+                        {
+                            "name": owner.name,
+                            "link_code": owner.link_code,
+                            "link_url": telegram_client.build_link_url(owner.link_code),
+                            "task_count": 0,
+                        },
                     )
                     entry["task_count"] += 1
                 skipped.append({
@@ -787,6 +812,20 @@ def get_chase_plan(
                     "title": task.title,
                     "owner_name": info["owner_name"],
                     "reason": "owner has not linked Telegram and cannot receive messages",
+                })
+                continue
+
+            # A blocked task is waiting on something the owner cannot fix, and
+            # they have usually already said so. Chasing them again is noise —
+            # it needs the manager to unblock it or move the date, so it goes
+            # to the digest instead.
+            if task.status == "blocked":
+                skipped.append({
+                    "task_id": task.id,
+                    "title": task.title,
+                    "owner_name": info["owner_name"],
+                    "reason": "blocked — needs the manager to unblock or reschedule, "
+                              "not the owner to be chased again",
                 })
                 continue
 
@@ -886,6 +925,12 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
     plus counts and the people worth calling out: those who have stopped
     replying, and those who never linked Telegram and cannot be reached.
 
+    `blocked_needing_decision` matters most. Blocked tasks are deliberately no
+    longer chased — the owner cannot fix them and has usually already
+    explained why — so the digest is the only place they surface. Each carries
+    the owner's own words and whether the deadline has already passed, because
+    the manager's likely next move is to unblock it or move the date.
+
     Args:
         at_risk_hours: Tasks due within this many hours are flagged
             `due_within_window` for your consideration.
@@ -905,10 +950,31 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
         active: list[dict] = []
         overdue = 0
         unresponsive: list[dict] = []
+        blocked: list[dict] = []
         for task in tasks:
             if task.status in CLOSED_STATUSES:
                 continue
             info = _task_dict(session, task, now)
+
+            if task.status == "blocked":
+                # These are deliberately not chased any more (see
+                # get_chase_plan), so the digest is the only place they
+                # surface. Carry the owner's own words and whether the
+                # deadline has already gone, since the manager's likely
+                # action is to unblock it or move the date.
+                blocked.append({
+                    "task_id": info["task_id"],
+                    "title": info["title"],
+                    "owner_name": info["owner_name"],
+                    "deadline_local": info["deadline_local"],
+                    "hours_until_deadline": info["hours_until_deadline"],
+                    "deadline_already_passed": (
+                        info["hours_until_deadline"] is not None
+                        and info["hours_until_deadline"] < 0
+                    ),
+                    "reason_given": info["last_reply_text"],
+                    "said_at_local": info["last_reply_at_local"],
+                })
             hours_left = info["hours_until_deadline"]
             info["is_overdue"] = hours_left is not None and hours_left < 0
             info["due_within_window"] = (
@@ -950,6 +1016,7 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
             "active_tasks": active,
             "active_count": len(active),
             "overdue_count": overdue,
+            "blocked_needing_decision": blocked,
             "unresponsive": unresponsive,
             "unreachable_people": unreachable,
             "pending_unmatched_count": pending_unmatched,
