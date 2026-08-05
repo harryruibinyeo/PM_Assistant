@@ -4,6 +4,98 @@ This file is the running history of this project: what was done, in what order, 
 
 ---
 
+# Architecture and tech stack
+
+## What this is
+
+An AI agent that tracks who owes what by when, chases people on Telegram for status updates, understands their free-text replies, and reports to the manager once a day. Everything runs locally — no cloud AI service is involved.
+
+## How the pieces fit together
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ macOS host  (Apple Silicon, 48 GB unified memory)                             │
+│                                                                               │
+│   ┌─────────────────────────────┐                                             │
+│   │ LM Studio   (native, Metal) │   All reasoning happens here.               │
+│   │ Qwen3.6-27B-MLX-4bit        │   Runs OUTSIDE Docker because containers    │
+│   └──────────────▲──────────────┘   on macOS cannot reach the GPU.            │
+│                  │                                                            │
+│                  │ HTTP · host.docker.internal:1234/v1                        │
+│   ┌──────────────┼────────────────────────────────────────────────────────┐   │
+│   │ Docker Desktop — ONE shared internal Linux VM                          │  │
+│   │              │                                                         │  │
+│   │  ┌───────────┴──────────────┐         ┌───────────────────────────┐    │  │
+│   │  │ docker compose           │         │ Kubernetes  (kind)        │    │  │
+│   │  │                          │  MCP    │ namespace: pm-chaser      │    │  │
+│   │  │  ODYSSEUS  (unmodified)  │ ──────► │                           │    │  │
+│   │  │   ├ scheduler (cron)     │  HTTP   │  pm-chaser-mcp   (pod)    │    │  │
+│   │  │   ├ agent loop           │ ◄────── │   ├ 11 MCP tools          │    │  │
+│   │  │   ├ Skills store         │         │   └ SQLite  (on a PVC)    │    │  │
+│   │  │   ├ MCP client           │         │                           │    │  │
+│   │  │   └ crew tool-allowlist  │         │  Service: LoadBalancer    │    │  │
+│   │  │                          │         │  172.19.0.5:8000          │    │  │
+│   │  │  chromadb · searxng      │         │  Secret · ConfigMap · PVC │    │  │
+│   │  └──────────────────────────┘         └─────────────┬─────────────┘    │  │
+│   └─────────────────────────────────────────────────────┼──────────────────┘  │
+└─────────────────────────────────────────────────────────┼─────────────────────┘
+                                                          │ HTTPS
+                                                          ▼
+                                              ┌───────────────────────┐
+                                              │   Telegram Bot API    │
+                                              └───────────┬───────────┘
+                                          ┌───────────────┴───────────────┐
+                                          ▼                               ▼
+                                   Jeffrey  (PM)                  Henry  (employee)
+                                   assigns work in Odysseus       gets chased, replies
+                                   receives digests + escalations in plain language
+```
+
+Two connection details are non-obvious and both cost time to discover:
+
+- **Odysseus reaches LM Studio via `host.docker.internal`** — a bridge from a container *out to the Mac*. That works because LM Studio runs natively on the host.
+- **Odysseus reaches `pm-chaser-mcp` via a `LoadBalancer` IP, not `host.docker.internal` and not `NodePort`.** Both live inside Docker Desktop's single Linux VM, on different internal networks that can already route to each other. `NodePort` is never exposed to the Mac at all under a kind cluster. See Step 2 for the full three-layer explanation.
+
+## The stack, and why each piece is there
+
+| Layer | Choice | Why this one |
+|---|---|---|
+| Reasoning | **Qwen3.6-27B-MLX-4bit** via **LM Studio** | Runs on-device on Metal. Writes every message, interprets every reply. No cloud API. |
+| Agent runtime | **Odysseus** (third-party, AGPL, **unmodified**) | Already had a cron scheduler, an agent loop, an MCP client and a Skills system. Rebuilding those would have been the bulk of the work. |
+| Agent instructions | **Skills** (`SKILL.md`) | Plain-markdown procedures injected into the agent's context — tone, escalation rules, pitfalls. No code. |
+| New capability | **`pm-chaser-mcp`** (Python 3.12, `mcp` 2.0 SDK) | The only new service. Exposes 11 tools over MCP's `streamable-http` transport. |
+| Data | **SQLite** + **SQLAlchemy** | Single file, no server. Four tables: `Person`, `Task`, `CheckIn`, `UnmatchedMessage`. |
+| Messaging | **Telegram Bot API** via **`httpx2`** | Just two calls — `sendMessage`, `getUpdates`. A full bot framework assumes a long-lived listener, which is the wrong shape: Telegram is only polled when a scheduled run asks. |
+| Hosting | **Kubernetes** (Docker Desktop / kind) | Restarts the service if it dies, keeps the database on a `PersistentVolumeClaim`, holds the bot token in a `Secret`. Only this one service runs here — Odysseus stays on `docker compose`. |
+| Scheduling | Odysseus **ScheduledTask** (cron) + **CrewMember** allowlist | Chase every 30 min, digest at 09:00. The crew allowlist cuts the model's tool surface from 71 tools to 13, which is what made tool-calling reliable. |
+
+## How one chase actually flows
+
+1. **Odysseus's scheduler** fires the cron job and starts an agent run — no human involved.
+2. The **crew allowlist** strips Odysseus's 60 built-in tools down to 2, leaving the model ~13 tools total instead of 71.
+3. The agent calls **`get_chase_plan()`** — one call. The service polls Telegram, files anything that arrived, applies every rule in Python (re-ping floor, escalation threshold, blocked-task exclusion, unreachable owners, one-task-per-person) and returns a finished shortlist.
+4. For any reply, the agent **reads what it means** — *"waiting on the finance sheet"* → `blocked` — and calls `update_task`.
+5. For anything to chase, the agent **writes the message itself** and calls `telegram_send_message(..., task_id=...)`, which sends it and records the check-in atomically.
+6. **`pm-chaser-mcp`** calls Telegram; the message lands on the employee's phone.
+7. Their reply is picked up on the next run, matched back to the task by Telegram's reply-threading (or flagged as ambiguous rather than guessed).
+8. Once a day, **`get_digest_data()`** feeds the same agent a summary for the manager — including blocked work needing a decision.
+
+## The dividing line that shapes everything
+
+**Code decides *what* and *who*. The model decides *what to say* and *what replies mean*.**
+
+| Decided in Python | Decided by the model |
+|---|---|
+| Which tasks are overdue or due soon | Every word of every message sent to a human |
+| Who was pinged too recently to chase again | What a free-text reply actually means |
+| Who to escalate after repeated silence | Which task an ambiguous message referred to |
+| Which tasks are blocked and belong to the manager | Whether a reply is even a status update |
+| One task per person per run | What belongs in the digest and what leads it |
+
+Rules that must *always* hold cannot live in prose the model might skip — so they live in code, where they are guaranteed. Everything requiring language or judgement stays with the model. This split was not the original design; it came from the failure documented under *"The debugging that mattered most"*.
+
+---
+
 ## 2026-08-04 — Local AI stack set up (before this project started)
 
 Before this project existed, the local infrastructure it depends on was already built and tested:
