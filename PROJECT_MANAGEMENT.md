@@ -429,3 +429,19 @@ Three options were considered: chase blocked tasks far less often; stop chasing 
 > **At risk** — Henry's Q3 board deck is due in ~5 hours with 0% progress.
 
 The second line is worth noting: **nothing in the data marks that deck as "at risk"** — there is no such flag, threshold or rule. The model saw "due in 5 hours, 0% progress" and made the judgement itself. That is precisely the call deliberately *not* hardcoded into `get_digest_data()`, and it is doing real work.
+
+---
+
+## 2026-08-06 — Chase runs were taking ~3 minutes; fixed to ~20–40 seconds
+
+Not a `pm-chaser` change — nothing in this repo, no redeploy, no Reconnect. The cause was entirely in how LM Studio had the model loaded.
+
+**Measured, not assumed.** `lms ps` showed the model loaded with `parallel: 4` and a ~120k-token context reservation. A direct benchmark against LM Studio's API, bypassing Odysseus entirely, confirmed generation at **2.32 tokens/sec** — on an M4 Pro, a 16GB 4-bit model should manage roughly 15-17 tok/s (memory-bandwidth-bound: every token requires reading the whole model, and this chip does ~273 GB/s). The GPU was confirmed in use (near-0% CPU during generation, and the model format is MLX, which is GPU-only by construction) — the problem was configuration, not hardware or an offload failure.
+
+**The fix:** `lms unload qwen3.6-27b-mlx && lms load qwen3.6-27b-mlx -c 32768 --parallel 1 --gpu max --speculative-draft-mtp -y`. `parallel: 4` provisions the model to serve four simultaneous requests — a batched-serving mode with real overhead — when the agent only ever makes one call at a time. Dropping to `parallel: 1` was the change that mattered; `--speculative-draft-mtp` (multi-token speculative decoding, free if the model supports it) and the smaller context reservation were included but not isolated as separately responsible.
+
+**Verified after reload:** 14.5-14.7 tok/s plain generation, 12.2 tok/s with a tool schema attached — roughly 6x the original speed, consistent across three separate test loads.
+
+**One loose end, left unresolved deliberately:** `lms ps` continued reporting `contextLength: 119552` regardless of what `-c` was given, including on a fresh model identifier with `-c 8192`. Since the metric that actually matters — throughput — moved and stayed moved, this is being treated as a stale/cosmetic reporting field in this LM Studio version rather than a real problem, rather than spending further time on a number that doesn't affect behavior.
+
+**Operationally important: this does not persist.** It is a runtime load setting, not a saved config. If LM Studio restarts or the Mac reboots, the model will very likely reload with its previous defaults (`parallel: 4`) and the slowdown returns. If chase/digest runs are ever slow again, check `lms ps` for `parallel` before assuming anything else is wrong.
