@@ -751,8 +751,10 @@ def get_chase_plan(
         newly_linked: people who just connected their Telegram.
         to_chase: chase these now — one per person, most urgent first. Write a
             message for each and send it with telegram_send_message(task_id=...).
-        to_escalate: too many unanswered pings. Tell the manager rather than
-            pinging again.
+        to_escalate: too many unanswered pings, grouped one entry per owner
+            (each carrying every overdue task of theirs) — send exactly one
+            message per entry, covering all of that person's tasks, never one
+            message per task.
         unreachable: people who own work but never linked Telegram, with their
             link codes. Not their fault and never an ignored ping.
         skipped: filtered out this run, each with a reason.
@@ -882,6 +884,27 @@ def get_chase_plan(
             claimed.add(owner)
             to_chase.append(cand)
 
+        # Grouped by owner, not left as a flat per-task list — mirrors how
+        # `to_chase` is already deduplicated to one entry per person. Without
+        # this, a model composing the escalation message has to notice on its
+        # own that several tasks belong to the same person and combine them;
+        # tested for real and found wanting (a faster, smaller model sent
+        # three separate messages instead of one). Grouping here makes the
+        # mistake structurally impossible rather than just discouraged.
+        _escalations_by_owner: dict[str, list[dict]] = {}
+        for entry in to_escalate:
+            _escalations_by_owner.setdefault(entry["owner_name"], []).append({
+                "task_id": entry["task_id"],
+                "title": entry["title"],
+                "unanswered_checkin_count": entry["unanswered_checkin_count"],
+                "hours_overdue": entry["hours_overdue"],
+                "deadline_local": entry["deadline_local"],
+            })
+        to_escalate = [
+            {"owner_name": owner, "tasks": owner_tasks}
+            for owner, owner_tasks in _escalations_by_owner.items()
+        ]
+
         plan = {
             "replies_to_interpret": updates.get("replies", []),
             "unmatched_to_resolve": updates.get("unmatched", []),
@@ -904,7 +927,8 @@ def get_chase_plan(
         if to_chase:
             bits.append(f"{len(to_chase)} to chase")
         if to_escalate:
-            bits.append(f"{len(to_escalate)} to escalate")
+            _escalated_tasks = sum(len(e["tasks"]) for e in to_escalate)
+            bits.append(f"{_escalated_tasks} task(s) to escalate across {len(to_escalate)} owner(s)")
         if plan["unreachable"]:
             bits.append(f"{len(plan['unreachable'])} unreachable owner(s)")
         plan["summary"] = "; ".join(bits) if bits else "nothing to do this run"

@@ -4,6 +4,9 @@ __pycache__/
 .venv/
 venv/
 
+# agent/run.py runtime output — will contain real message content over time
+agent/logs/
+
 # Local data — SQLite DB, Telegram token, any real secrets
 server/*.db
 server/*.db-journal

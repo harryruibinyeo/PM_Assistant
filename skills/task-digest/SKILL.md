@@ -1,7 +1,7 @@
 ---
 name: task-digest
 description: Write the manager's summary of task progress and send it to them on Telegram
-version: 2.0.0
+version: 2.1.0
 category: project-management
 tags: [digest, summary, report, manager, standup, progress, roundup]
 status: published
@@ -28,6 +28,7 @@ The scheduled daily digest, or any request for a summary of where tasks stand. T
 5. Write it as short readable prose, not a table or a data dump. Quote the specific blockers people reported rather than saying "some tasks are blocked".
 6. If nothing needs attention, say so in one line. A short digest is a good digest.
 7. Send it with telegram_send_message(manager_name, digest) and NO task_id.
+8. This runs unattended — nobody reads a second report. After sending, close with one short line only (e.g. "Digest sent to Jeffrey."). Do not repeat or re-summarize the digest content.
 
 ## Pitfalls
 

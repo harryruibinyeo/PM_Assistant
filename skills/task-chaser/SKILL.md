@@ -1,7 +1,7 @@
 ---
 name: task-chaser
 description: Chase task owners on Telegram for status updates and record what they say
-version: 3.0.0
+version: 3.5.0
 category: project-management
 tags: [telegram, task, tasks, chase, chasing, deadline, overdue, blocked, status, reminder]
 status: published
@@ -36,10 +36,10 @@ The scheduled chase check, or any request to chase people for status on their ta
 3. For each item in `replies_to_interpret`: decide what the message actually means and call update_task with the status and progress_pct it implies. If it was not a status update, leave the task alone.
 4. For each item in `unmatched_to_resolve`: work out which task it refers to, then call resolve_unmatched(unmatched_id, task_id) and update_task if the status changed. If it is about no task at all, call resolve_unmatched(unmatched_id) alone to dismiss it. If it is a genuine coin flip, message the person to ask which task they meant and leave it unresolved.
 5. For each item in `to_chase`: write a short, friendly, specific message naming the task and giving the deadline in plain words ("2 days overdue"), asking one clear question. Vary the wording between runs. Send it with telegram_send_message(owner_name, text, task_id=<task>).
-6. For each item in `to_escalate`: these have been ignored repeatedly, so do not ping them again. Send one message to `manager_name` naming the task, its owner, and how many pings went unanswered.
+6. `to_escalate` is grouped one entry per owner — every overdue task of theirs already combined together, since they've been ignored repeatedly and should not be pinged again. For each entry, send exactly **one message** to `manager_name` naming every task in it and how overdue each is, then ask what to do next. Real example, sent for real, worth matching the tone and shape of: "Hi Jeffrey, escalating 3 tasks from Henry who hasn't replied to 3 check-ins each:\n1. Finish the Q3 board deck (overdue by ~35h)\n2. Review vendor SOW (due today)\n3. Confirm the venue booking for the offsite (overdue by ~34h)\nPlease advise on next steps."
 7. If `unreachable` is not empty, tell `manager_name` who they are and include each link code, so they can be asked to send /start to the bot.
 8. Glance at `skipped`. The rules are deliberately conservative — if one obviously deserves chasing anyway, chase it and say why you overrode the rule.
-9. Report briefly what you sent and to whom.
+9. This runs unattended — nobody reads a narrative report. After the last tool call, close with one short line only, stating exactly and only what happened *this* run — never copy names, counts, or phrasing from an example. Only mention chasing if `to_chase` was non-empty, and only mention escalating if `to_escalate` was non-empty; do not force both into one sentence if only one occurred. Do not write a summary of what each message said or why.
 
 ## Pitfalls
 
@@ -49,6 +49,7 @@ The scheduled chase check, or any request to chase people for status on their ta
 - Treating someone in `unreachable` as ignoring you. They received nothing. That is a setup problem for the manager, not a missed reply.
 - Assuming every entry in `replies_to_interpret` is a status update. A reply is matched whenever one ping is outstanding, so "thanks" can land there. Read it first.
 - Sending more than one message to the same person in a run. `to_chase` already holds one task per person; do not add more.
+- Sending a separate escalation message per task instead of per `to_escalate` entry. Each entry already covers everything for one owner — send one message per entry, not one per task inside it.
 - Overriding the skip on a blocked task. The owner cannot fix a blocker and has usually already explained it, so chasing again is pure noise — it needs the manager to unblock it or move the date, and the digest raises it there.
 
 ## Verification
@@ -59,3 +60,4 @@ The scheduled chase check, or any request to chase people for status on their ta
 - Nothing in `unmatched_to_resolve` was left pending unless you are waiting on a clarifying answer.
 - Escalations went to the manager, not to the person being chased.
 - get_chase_plan was called exactly once.
+- The final sign-off names only people and counts from *this* run — not from an example.
