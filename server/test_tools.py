@@ -204,6 +204,14 @@ def main():
     check("it's gone from listings", all(t["task_id"] != task_b for t in tools.list_tasks(filter="all")))
     check("deleting twice errors", "error" in tools.delete_task(task_b))
 
+    # ── delete_person ─────────────────────────────────────────────────────
+    tools.register_person("Mistake")
+    check("delete_person removes a task-free person", tools.delete_person("Mistake").get("deleted"))
+    check("they're gone from listings", all(p["name"] != "Mistake" for p in tools.list_people()))
+    check("deleting an unknown person errors", "error" in tools.delete_person("Nobody"))
+    check("a person owning a task is refused", "error" in tools.delete_person("Alice"))
+    check("...and Alice is untouched", any(p["name"] == "Alice" for p in tools.list_people()))
+
     # ── get_chase_plan ────────────────────────────────────────────────────
     # Fresh cast so the plan's filtering can be checked in isolation.
     for who in ("Dana", "Erin"):
@@ -247,7 +255,11 @@ def main():
     for _ in range(3):
         tools.telegram_send_message("Erin", "checking in", task_id=t_erin)
     plan = tools.get_chase_plan(min_hours_between_pings=0)
-    check("3 unanswered pings escalates instead of chasing", any(e["task_id"] == t_erin for e in plan["to_escalate"]))
+    # to_escalate is grouped one entry per owner, each holding a list of tasks.
+    check(
+        "3 unanswered pings escalates instead of chasing",
+        any(t["task_id"] == t_erin for e in plan["to_escalate"] for t in e["tasks"]),
+    )
     check("...and it is no longer in to_chase", t_erin not in [c["task_id"] for c in plan["to_chase"]])
 
     # Replies surface for interpretation rather than being auto-applied.

@@ -1045,3 +1045,37 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
             "unreachable_people": unreachable,
             "pending_unmatched_count": pending_unmatched,
         }
+
+
+# ---------------------------------------------------------------------------
+# 12. delete_person
+# ---------------------------------------------------------------------------
+def delete_person(name: str) -> dict:
+    """Permanently remove a person who was registered by mistake.
+
+    Refuses if they own any task at all, open or closed — reassign those
+    tasks with update_task(owner_name=...) or remove them with delete_task
+    first. Keeps this limited to genuine "wrong person, nothing built on
+    them yet" cleanup, never a way to silently lose task/check-in history.
+    Callers (e.g. the manager-bot skill) are expected to confirm with a
+    human before calling this — it is not enforced here, since this layer
+    has no concept of "the human already agreed," only of what's safe to
+    allow if asked.
+    """
+    with session_scope() as session:
+        person = _find_person_by_name(session, name)
+        if person is None:
+            return {"error": f"No registered person named '{name}'."}
+        task_count = session.execute(
+            select(func.count(Task.id)).where(Task.owner_id == person.id)
+        ).scalar_one()
+        if task_count > 0:
+            return {
+                "error": f"'{person.name}' owns {task_count} task(s) — reassign them "
+                "with update_task(owner_name=...) or remove them with delete_task "
+                "before removing this person."
+            }
+        person_id = person.id
+        person_name = person.name
+        session.delete(person)
+        return {"deleted": True, "person_id": person_id, "name": person_name}

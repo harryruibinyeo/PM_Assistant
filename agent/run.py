@@ -22,80 +22,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
-import socket
 import subprocess
 import sys
 import time
-from datetime import datetime
-from pathlib import Path
 
 import httpx2 as httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-MODEL = "qwen/qwen3.6-35b-a3b"
+from common import (
+    PORT_FORWARD_LOCAL_PORT,
+    call_lm_studio,
+    log,
+    notify_failure,
+    parse_skill,
+    parse_tool_args,
+    start_port_forward,
+)
+
 MAX_ROUNDS = 5
-ROUND_TIMEOUT = 300
-KUBECTL = "/usr/local/bin/kubectl"
-PORT_FORWARD_LOCAL_PORT = 18173
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SKILLS_DIR = REPO_ROOT / "skills"
-
-
-def log(msg: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"{ts} {msg}", flush=True)
-
-
-def parse_skill(name: str) -> str:
-    """Extract When to Use + Procedure + Pitfalls + Verification from a
-    SKILL.md. Verification is deliberately included here even though
-    Odysseus never auto-injected it (brevity mattered when every extra
-    prompt token cost real time under the old 27B model) — it's a free
-    self-check now, and a second line of defense against the kind of
-    mistake testing already caught once (splitting one escalation into
-    three separate messages)."""
-    text = (SKILLS_DIR / name / "SKILL.md").read_text()
-
-    def section(heading: str) -> str:
-        m = re.search(rf"## {heading}\n(.*?)(?=\n## |\Z)", text, re.S)
-        return m.group(1).strip() if m else ""
-
-    return (
-        f"When to Use:\n{section('When to Use')}\n\n"
-        f"Procedure:\n{section('Procedure')}\n\n"
-        f"Pitfalls:\n{section('Pitfalls')}\n\n"
-        f"Before your final sign-off, verify:\n{section('Verification')}"
-    )
-
-
-def start_port_forward() -> subprocess.Popen:
-    """`kubectl port-forward` proxies through the Kubernetes API server
-    (exposed to the Mac on 6443) rather than the LoadBalancer IP
-    (172.19.0.x), which only routes from inside Docker Desktop's VM —
-    confirmed directly tonight (ConnectTimeout from the host). This also
-    sidesteps the LoadBalancer IP drift problem entirely, since
-    port-forward always targets the service by name, never a cached IP."""
-    proc = subprocess.Popen(
-        [KUBECTL, "port-forward", "-n", "pm-chaser", "svc/pm-chaser-mcp",
-         f"{PORT_FORWARD_LOCAL_PORT}:8000"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-    )
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(f"kubectl port-forward exited early: {proc.stderr.read()}")
-        try:
-            with socket.create_connection(("localhost", PORT_FORWARD_LOCAL_PORT), timeout=0.5):
-                return proc
-        except OSError:
-            time.sleep(0.3)
-    proc.terminate()
-    raise RuntimeError("kubectl port-forward did not become ready in time")
-
 
 # ---------------------------------------------------------------------------
 # Tool schemas (OpenAI function-calling format) — one entry per MCP tool
@@ -212,6 +157,15 @@ JOBS = {
         "skill": "task-digest",
         "tools": ["get_digest_data", "telegram_send_message"],
         "first_tool": "get_digest_data",
+        # A digest run always has something to say (even "all clear") and
+        # must always end with a real telegram_send_message call — unlike
+        # chase, there is no legitimate "nothing to do" outcome that skips
+        # sending. Caught for real: the model wrote out the full digest text
+        # plus a closing "Digest sent to Jeffrey." line with zero tool calls
+        # after round 0 — narrated the send instead of performing it. The
+        # model's own claim can't be trusted here; only the tool actually
+        # succeeding counts.
+        "requires_send": True,
         "trigger": (
             "get_digest_data has already been called for you — its result is the "
             "tool message just above. Do not call it again. Working from that result:\n\n"
@@ -223,34 +177,6 @@ JOBS = {
         ),
     },
 }
-
-
-def parse_tool_args(raw: str) -> dict:
-    try:
-        return json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        return {}
-
-
-async def call_lm_studio(client: httpx.AsyncClient, messages: list[dict], tools: list[dict]) -> dict:
-    resp = await client.post(
-        LM_STUDIO_URL,
-        json={
-            "model": MODEL,
-            "messages": messages,
-            "tools": tools,
-            # Generous headroom: reasoning tokens count against this budget too,
-            # and a synthesis-heavy round has hit 10k+ reasoning chars alone —
-            # too low a cap here truncates the response before the model ever
-            # reaches its actual tool call, which fails *silently* (0 tool
-            # calls, empty content, no error) rather than with a clear signal.
-            "max_tokens": 8000,
-            "stream": False,
-        },
-        timeout=ROUND_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.json()
 
 
 async def run_job(job_name: str) -> None:
@@ -326,6 +252,11 @@ async def _run_job_inner(job_name: str, job: dict, mcp_url: str) -> None:
             # (a real failure) apart from "the wrap-up hiccupped after the real
             # work already succeeded" (not worth alarming anyone over).
             action_taken = False
+            # Narrower than action_taken: specifically whether
+            # telegram_send_message itself succeeded, checked below for jobs
+            # where "wrote a confident final message but never actually sent"
+            # must be treated as a failure regardless of finish_reason.
+            send_happened = False
 
             for round_num in range(1, MAX_ROUNDS + 1):
                 round_messages = list(messages)
@@ -353,7 +284,7 @@ async def _run_job_inner(job_name: str, job: dict, mcp_url: str) -> None:
                     final_text = (choice.get("content") or "").strip()
                     # An empty final turn is never a valid outcome — the skill
                     # always asks for at least a one-line sign-off, even on a
-                    # quiet run ("nothing to chase"). Seen for real tonight:
+                    # quiet run ("nothing to chase"). Seen for real once:
                     # finish_reason="length" truncated the response mid-
                     # reasoning, before the model reached its tool call or any
                     # visible text, and the run would have looked like a clean
@@ -377,6 +308,32 @@ async def _run_job_inner(job_name: str, job: dict, mcp_url: str) -> None:
                             f"(finish_reason={finish_reason}) — likely truncated before "
                             "acting; nothing was sent"
                         )
+
+                    if job.get("requires_send") and not send_happened:
+                        # The model wrote a confident-sounding final answer —
+                        # including, seen for real, a closing line claiming
+                        # it was sent — without ever calling
+                        # telegram_send_message. Rather than accepting that
+                        # as done (the old bug) or discarding the digest it
+                        # just composed, nudge it to actually send that same
+                        # content and give it one more round. The final
+                        # requires_send check after this loop remains as the
+                        # backstop if it still won't comply.
+                        log(
+                            f"[{job_name}] round {round_num} produced a final answer "
+                            "without ever calling telegram_send_message — nudging it "
+                            "to actually send instead of accepting the narration"
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "That was never sent — you have not called "
+                                "telegram_send_message. Call it now with that same "
+                                "content before finishing."
+                            ),
+                        })
+                        continue
+
                     log(f"[{job_name}] done: {final_text}")
                     break
 
@@ -392,6 +349,8 @@ async def _run_job_inner(job_name: str, job: dict, mcp_url: str) -> None:
                     else:
                         log(f"[{job_name}] tool {tool_name}({tool_args}) -> {result_text[:200]}")
                         action_taken = True
+                        if tool_name == "telegram_send_message":
+                            send_happened = True
 
                     messages.append({
                         "role": "tool",
@@ -402,43 +361,14 @@ async def _run_job_inner(job_name: str, job: dict, mcp_url: str) -> None:
                 log(f"[{job_name}] FAILED: hit max rounds ({MAX_ROUNDS}) without finishing")
                 raise RuntimeError(f"{job_name} did not finish within {MAX_ROUNDS} rounds")
 
+            if job.get("requires_send") and not send_happened:
+                raise RuntimeError(
+                    f"{job_name} ended without ever calling telegram_send_message — "
+                    "the model likely narrated the send in its final text instead of "
+                    "actually performing it; nothing was sent"
+                )
+
     log(f"[{job_name}] total time: {time.time() - run_start:.1f}s")
-
-
-async def notify_failure(job_name: str, error: str) -> None:
-    """Best-effort Telegram alert on a real failure — every failure mode
-    found tonight (truncated response, dead LM Studio, orphaned MCP session)
-    used to just sit in a log file nobody was watching. Never raises itself;
-    a failed notification should never mask the original failure."""
-    try:
-        pf_proc = start_port_forward()
-        try:
-            mcp_url = f"http://localhost:{PORT_FORWARD_LOCAL_PORT}/mcp"
-            async with streamable_http_client(mcp_url) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    result = await session.call_tool("list_people", {"role": "manager"})
-                    # A tool returning a list comes back as one content block
-                    # per item, not one JSON array in a single block.
-                    managers = [json.loads(b.text) for b in result.content]
-                    if not managers:
-                        log(f"[{job_name}] could not send failure notification: no manager registered")
-                        return
-                    manager_name = managers[0]["name"]
-                    send_result = await session.call_tool("telegram_send_message", {
-                        "owner_name": manager_name,
-                        "text": f"pm-chaser {job_name} run failed: {error}",
-                    })
-                    send_text = "\n".join(b.text for b in send_result.content)
-                    log(f"[{job_name}] failure notification to {manager_name} -> {send_text}")
-        finally:
-            pf_proc.terminate()
-            try:
-                pf_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pf_proc.kill()
-    except Exception as exc:
-        log(f"[{job_name}] failed to send failure notification: {exc}")
 
 
 def main() -> None:

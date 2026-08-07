@@ -1,7 +1,7 @@
 ---
 name: task-digest
 description: Write the manager's summary of task progress and send it to them on Telegram
-version: 2.1.0
+version: 2.2.0
 category: project-management
 tags: [digest, summary, report, manager, standup, progress, roundup]
 status: published
@@ -27,12 +27,12 @@ The scheduled daily digest, or any request for a summary of where tasks stand. T
 4. For each item in `blocked_needing_decision`, name who is blocked and what they said (`reason_given`), then recommend a concrete next step — extend the deadline, reassign it, or clear the blocker. These are no longer being chased, so they sit untouched until the manager acts. Say so plainly when `deadline_already_passed` is true: a blocked task whose deadline has gone will stay stuck until the date is moved.
 5. Write it as short readable prose, not a table or a data dump. Quote the specific blockers people reported rather than saying "some tasks are blocked".
 6. If nothing needs attention, say so in one line. A short digest is a good digest.
-7. Send it with telegram_send_message(manager_name, digest) and NO task_id.
-8. This runs unattended — nobody reads a second report. After sending, close with one short line only (e.g. "Digest sent to Jeffrey."). Do not repeat or re-summarize the digest content.
+7. Send it with telegram_send_message(manager_name, digest) and NO task_id. This step is mandatory even on a quiet day ("all clear" still has to actually be sent) — writing the digest text is not the same as sending it.
+8. Only after telegram_send_message has actually been called and returned sent:true: this runs unattended, nobody reads a second report, so close with one short line only (e.g. "Digest sent to Jeffrey."). Never write that closing line, or the digest content itself, as your final answer without having called the tool first — a confident-sounding summary that was never sent is a failed run, not a successful one.
 
 ## Pitfalls
 
-- Describing a tool call in prose instead of emitting it. The run ends having done nothing.
+- Describing a tool call in prose instead of emitting it, or writing the digest out as your final text without ever calling telegram_send_message. The run ends having done nothing, even if the sign-off claims otherwise.
 - Passing a task_id when sending the digest. It is not a chase and must not be recorded as a check-in against any task.
 - Sending chase messages during a digest run. This job only reports; task-chaser does the chasing.
 - Listing every task mechanically instead of leading with what needs a decision.
