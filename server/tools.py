@@ -326,7 +326,39 @@ def update_task(
 
 
 # ---------------------------------------------------------------------------
-# 4. delete_task
+# 4. reassign_task
+# ---------------------------------------------------------------------------
+def reassign_task(task_id: int, new_owner_name: str) -> dict:
+    """Move a task to a different registered person.
+
+    A narrower, explicit alternative to update_task(owner_name=...): it only
+    ever touches ownership, so a reassignment can't happen silently as a side
+    effect of an unrelated field edit in the same call. Use this whenever the
+    intent is specifically "move this task to someone else."
+    """
+    with session_scope() as session:
+        task = session.get(Task, task_id)
+        if task is None:
+            return {"error": f"No task with id {task_id}"}
+        new_owner = _find_person_by_name(session, new_owner_name)
+        if new_owner is None:
+            return {"error": f"No registered person named '{new_owner_name}'."}
+        # Looked up independently of the task.owner relationship (not via
+        # task.owner.name) — touching that relationship here would cache the
+        # old Person on the ORM identity map, and setting owner_id directly
+        # afterward doesn't invalidate that cache, leaving _task_dict's own
+        # task.owner.name read stale.
+        old_owner = session.get(Person, task.owner_id)
+        old_owner_name = old_owner.name if old_owner else None
+        task.owner_id = new_owner.id
+        session.flush()
+        result = _task_dict(session, task)
+        result["reassigned_from"] = old_owner_name
+        return result
+
+
+# ---------------------------------------------------------------------------
+# 5. delete_task
 # ---------------------------------------------------------------------------
 def delete_task(task_id: int) -> dict:
     """Permanently delete a task and its check-in history.
@@ -350,7 +382,7 @@ def delete_task(task_id: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 5. register_person
+# 6. register_person
 # ---------------------------------------------------------------------------
 def register_person(
     name: str,
@@ -400,7 +432,7 @@ def register_person(
 
 
 # ---------------------------------------------------------------------------
-# 6. list_people
+# 7. list_people
 # ---------------------------------------------------------------------------
 def list_people(role: str | None = None) -> list[dict]:
     """List registered people, their role, whether they've linked Telegram,
@@ -420,7 +452,7 @@ def list_people(role: str | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 7. telegram_send_message
+# 8. telegram_send_message
 # ---------------------------------------------------------------------------
 def telegram_send_message(owner_name: str, text: str, task_id: int | None = None) -> dict:
     """Send a Telegram message to a registered, linked person.
@@ -488,7 +520,7 @@ def telegram_send_message(owner_name: str, text: str, task_id: int | None = None
 
 
 # ---------------------------------------------------------------------------
-# 8. telegram_get_updates
+# 9. telegram_get_updates
 # ---------------------------------------------------------------------------
 def _store_unmatched(session, person, chat_id, text, reason, candidates=None) -> dict:
     row = UnmatchedMessage(
@@ -673,7 +705,7 @@ def telegram_get_updates() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 9. resolve_unmatched
+# 10. resolve_unmatched
 # ---------------------------------------------------------------------------
 def resolve_unmatched(unmatched_id: int, task_id: int | None = None) -> dict:
     """Resolve a message that couldn't be matched to a task automatically.
@@ -723,7 +755,7 @@ def resolve_unmatched(unmatched_id: int, task_id: int | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 10. get_chase_plan
+# 11. get_chase_plan
 # ---------------------------------------------------------------------------
 _PRIORITY_RANK = {"high": 0, "normal": 1, "low": 2}
 
@@ -936,7 +968,7 @@ def get_chase_plan(
 
 
 # ---------------------------------------------------------------------------
-# 11. get_digest_data
+# 12. get_digest_data
 # ---------------------------------------------------------------------------
 def get_digest_data(at_risk_hours: int = 24) -> dict:
     """Gather everything the manager's digest needs, in one call.
@@ -1048,7 +1080,7 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 12. delete_person
+# 13. delete_person
 # ---------------------------------------------------------------------------
 def delete_person(name: str) -> dict:
     """Permanently remove a person who was registered by mistake.

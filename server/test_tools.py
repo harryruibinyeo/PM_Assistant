@@ -186,6 +186,16 @@ def main():
     check("update_task can reassign the owner", u["owner_name"] == "Carol")
     tools.update_task(task_a, owner_name="Alice")
 
+    # ── reassign_task ────────────────────────────────────────────────────
+    r = tools.reassign_task(task_a, new_owner_name="Carol")
+    check("reassign_task moves ownership", r["owner_name"] == "Carol")
+    check("reassign_task reports who it came from", r["reassigned_from"] == "Alice")
+    check("reassign_task doesn't touch other fields", r["title"] == "Q3 report v2")
+    tools.reassign_task(task_a, new_owner_name="Alice")
+
+    check("reassign_task on an unknown task errors", "error" in tools.reassign_task(999999, new_owner_name="Alice"))
+    check("reassign_task to an unregistered person errors", "error" in tools.reassign_task(task_a, new_owner_name="Nobody"))
+
     u = tools.update_task(task_a, status="done", progress_pct=40)
     check("status=done forces progress to 100", u["progress_pct"] == 100)
     u = tools.update_task(task_b, progress_pct=100, status="in_progress")
