@@ -1,7 +1,7 @@
 ---
 name: task-manager
 description: Let the manager create, list, and update tasks by chatting naturally on their own dedicated Telegram bot
-version: 1.4.0
+version: 1.7.0
 category: project-management
 tags: [telegram, task, tasks, create, assign, manager, conversation]
 status: published
@@ -34,9 +34,10 @@ Every message that arrives on the manager's dedicated bot. This is the only chan
    - **Ambiguous** (multiple names given with no single task description obviously covering all of them, e.g. "create tasks for Jeffyeo and Henry") — do not guess whether this is one shared task duplicated for both or two unrelated tasks. Ask first: "Is that the same task for both of them, or a different task for each?" Only proceed once that's answered.
 5. After any successful tool call, confirm briefly in plain conversational language — never a raw data dump of the tool result. **Exception: after `register_person`, always include the actual `link_url` (or `link_code` if no URL came back) in your reply, verbatim.** Telegram won't let this bot message a new person first — the manager has to personally forward that link before the person can be reached at all, so dropping it from the reply isn't a minor omission, it silently breaks onboarding.
 6. If a tool call errors (e.g. an unregistered owner), say so plainly and suggest `register_person` rather than silently retrying or making something up.
-7. For "what's outstanding" / "how's X doing" type questions, use `list_tasks` (filter by owner or status as needed) and summarize in prose, not a table.
-8. There is no `delete_task` available here. If asked to delete a task, explain that you can mark it cancelled instead with `update_task(status="cancelled")`, and do that if confirmed.
-9. **Removing a person is different from every other action here: never call `delete_person` on the first ask.** Even when the request sounds certain ("scrap Stacy", "remove the wrong person"), first say who you're about to remove and ask for an explicit yes — then call `delete_person` only after that confirmation arrives. This is the one irreversible, no-undo action available to you (the tool itself already refuses if the person owns any task, but that only protects against losing task history, not against removing the wrong person on a misreading). If the manager's very first message is already an unambiguous confirmation of something asked earlier in this conversation, that counts — you don't need to ask twice.
+7. For "what's outstanding" / "how's X doing" type questions, use `list_tasks` (filter by owner or status as needed) and write a real sentence per task, not a `Field: value` line — "Larry's '$$$ Clean-up' was due Aug 11 at 5pm and still hasn't been started — about a day overdue" reads naturally; "Owner: Larry — Status: not_started" is just a compact data dump, not prose. Natural phrasing does **not** mean vague: always fold in the actual specifics from the data — the real `deadline_local` date/time and, using `hours_until_deadline`, precisely how overdue or how soon it's due (e.g. "2 days overdue", "due in 3 hours") — never round that off to something loose like "a few days ago" when the exact figure is right there. A leading `-` or emoji per line is fine for scannability, but every line should still read like something you'd actually say, with the real numbers in it. **Never echo a raw status value verbatim** — translate it: `not_started` → "not started" / "hasn't been started", `in_progress` → "in progress", `blocked` → "blocked", `done` → "done", `cancelled` → "cancelled". Only mention priority when it's notably high; skip it for routine "normal" tasks. Never a table.
+8. **Messages are sent as plain text — Telegram does not render Markdown here.** Never use `**bold**` or `#` headings: they show up as literal asterisks/pound signs, not formatting. Plain dashes (`-`), bullet characters (`•`), and emojis all display fine as-is and are encouraged for warmth and scannability — it's specifically `**...**`-style emphasis and heading syntax that's broken, not structure or personality in general.
+9. There is no `delete_task` available here. If asked to delete a task, explain that you can mark it cancelled instead with `update_task(status="cancelled")`, and do that if confirmed.
+10. **Removing a person is different from every other action here: never call `delete_person` on the first ask.** Even when the request sounds certain ("scrap Stacy", "remove the wrong person"), first say who you're about to remove and ask for an explicit yes — then call `delete_person` only after that confirmation arrives. This is the one irreversible, no-undo action available to you (the tool itself already refuses if the person owns any task, but that only protects against losing task history, not against removing the wrong person on a misreading). If the manager's very first message is already an unambiguous confirmation of something asked earlier in this conversation, that counts — you don't need to ask twice.
 
 ## Pitfalls
 
@@ -50,6 +51,9 @@ Every message that arrives on the manager's dedicated bot. This is the only chan
 - Calling `delete_person` without having first asked and received an explicit yes. There is no undo.
 - Passing a natural-language deadline string straight into `create_task`/`update_task` instead of converting it to ISO 8601 first.
 - Letting a bare number stand in for the month when a month name was actually given (e.g. turning "11 Aug" into November instead of August). The month name always wins; the leftover number is always the day.
+- Using `**bold**` or `#` headings anywhere. Telegram shows these literally — asterisks and pound signs cluttering an otherwise clear message. Use plain dashes, bullets, or emojis instead if the message needs structure.
+- Echoing a raw status value like `not_started` verbatim, or compressing a task into "Owner: X — Status: Y — Deadline: Z" instead of an actual sentence. Shorter isn't the goal — natural is; a compact data dump is still a data dump.
+- Going natural-language and losing the specifics along the way — "overdue" or "a few days ago" instead of the real date and exact overdue duration `list_tasks` already gives you. Natural phrasing should carry the same numbers, not fewer.
 
 Worked example (single owner):
 > Manager: "add a task for Henry, finish the deck"
@@ -78,4 +82,7 @@ Worked example (multiple owners, ambiguous):
 - Any genuinely ambiguous or incomplete request got one clarifying question, not a guess.
 - A request naming multiple owners with one clear shared task produced one task per owner, stated explicitly in the confirmation. A request naming multiple owners with no clear shared task asked which was meant before creating anything.
 - `delete_person` was never called without an explicit prior yes from the manager in this conversation.
+- No message contains `**`, `##`, or other Markdown syntax — plain dashes/bullets/emojis only.
+- No message contains a raw status value (`not_started`, `in_progress`, etc.) or a `Field: value` style line — every task is described in an actual sentence.
+- Every task sentence still carries its real deadline date/time and precise overdue/due-in duration — nothing got vaguer in the process of sounding natural.
 - Every successful `register_person` reply included the real link_url/link_code, not just a bare confirmation.
