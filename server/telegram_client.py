@@ -13,10 +13,40 @@ token — see its module docstring for why.
 from __future__ import annotations
 
 import os
+import re
 
 import httpx2
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
+
+# Telegram's MarkdownV2 parse mode is strict: any of these characters,
+# appearing as ordinary punctuation rather than intentional formatting
+# syntax, must be backslash-escaped or Telegram rejects the entire message
+# (400 "can't parse entities") instead of just rendering it oddly.
+_MDV2_RESERVED_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!])")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+
+
+def _escape_mdv2_literal(text: str) -> str:
+    """Escape MarkdownV2 reserved characters in plain (non-syntax) text."""
+    return _MDV2_RESERVED_RE.sub(r"\\\1", text)
+
+
+def _to_telegram_markdown_v2(text: str) -> str:
+    """Convert **bold**-style text (what models naturally write) into
+    Telegram MarkdownV2: real bold spans use MarkdownV2's single-asterisk
+    syntax, and everything else gets its reserved characters escaped so
+    ordinary punctuation (dates, dashes, exclamation marks) doesn't break
+    the send.
+    """
+    parts = []
+    last = 0
+    for m in _BOLD_RE.finditer(text):
+        parts.append(_escape_mdv2_literal(text[last:m.start()]))
+        parts.append("*" + _escape_mdv2_literal(m.group(1)) + "*")
+        last = m.end()
+    parts.append(_escape_mdv2_literal(text[last:]))
+    return "".join(parts)
 
 
 class TelegramNotConfigured(RuntimeError):
@@ -64,9 +94,24 @@ class TelegramClient:
         return f"https://t.me/{username}?start={code}"
 
     def send_message(self, chat_id: str, text: str) -> dict:
-        """Send a plain text message to a Telegram chat. Returns Telegram's response."""
+        """Send a message to a Telegram chat, rendering **bold** as real
+        MarkdownV2 formatting. Falls back to plain text if Telegram rejects
+        the formatted version (e.g. an unbalanced ** span) so a formatting
+        edge case never silently loses the message. Returns Telegram's
+        response.
+        """
         url = f"{TELEGRAM_API_BASE}/bot{self._token}/sendMessage"
-        resp = httpx2.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
+        resp = httpx2.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "text": _to_telegram_markdown_v2(text),
+                "parse_mode": "MarkdownV2",
+            },
+            timeout=10,
+        )
+        if resp.status_code == 400:
+            resp = httpx2.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
         resp.raise_for_status()
         return resp.json()
 
