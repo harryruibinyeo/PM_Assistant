@@ -1001,21 +1001,32 @@ def get_chase_plan(
 # 11b. chase_now
 # ---------------------------------------------------------------------------
 def chase_now(owner_name: str) -> dict:
-    """Force an immediate chase for one named person right now, bypassing
-    the re-ping floor and the escalation threshold — this is a deliberate
-    manual override (e.g. the manager typing "chase Henry now"), distinct
-    from get_chase_plan's scheduled sweep.
+    """Force an immediate chase of every open task for one named person right
+    now — a full manual override (e.g. the manager typing "chase Henry
+    now"), distinct from get_chase_plan's scheduled sweep.
 
-    Still respects: a task must be overdue or due soon to be worth chasing at
-    all, a blocked task is excluded (it needs the manager, not another ping —
-    same reasoning as get_chase_plan), and an owner who hasn't linked
-    Telegram can't be reached regardless. Unlike get_chase_plan, this returns
-    every matching task for this one person rather than just their single
-    most urgent one — write ONE message covering all of them, the same way
-    an escalation entry covers every task for one person in a single message.
+    Unlike get_chase_plan, this bypasses BOTH the re-ping floor AND the
+    overdue/due-soon eligibility window — that window exists so the
+    *automated* sweep doesn't nag someone about a task due next month, but an
+    explicit manual request already means the manager has decided now is the
+    right time, deadline-window logic or not. A task with no deadline at all
+    is included too, for the same reason. get_chase_plan (the scheduled
+    sweep) is unaffected by any of this — it still respects the floor and
+    the window exactly as before.
+
+    Still respects: a blocked task is excluded (it needs the manager, not
+    another ping — same reasoning as get_chase_plan), a closed (done/
+    cancelled) task has nothing to chase, and an owner who hasn't linked
+    Telegram can't be reached regardless of what's requested. Unlike
+    get_chase_plan, this returns every open task for this one person rather
+    than just their single most urgent one — write ONE message covering all
+    of them, the same way an escalation entry covers every task for one
+    person in a single message.
 
     Args:
-        owner_name: The person to chase. Must already be registered.
+        owner_name: The person to chase. Must already be registered — never
+            guess or infer this from earlier conversation context; ask if
+            it wasn't given explicitly in the request.
     """
     updates = telegram_get_updates()
     telegram_error = updates.get("error")
@@ -1036,21 +1047,12 @@ def chase_now(owner_name: str) -> dict:
             }
 
         now = _now()
-        due_soon_hours = 24
         tasks = session.execute(select(Task).where(Task.owner_id == owner.id)).scalars().all()
 
         matched: list[dict] = []
         skipped: list[dict] = []
         for task in tasks:
             if task.status in CLOSED_STATUSES:
-                continue
-            if not task.deadline:
-                continue
-
-            hours_left = _hours_between(task.deadline, now)
-            is_overdue = hours_left is not None and hours_left < 0
-            is_due_soon = hours_left is not None and 0 <= hours_left <= due_soon_hours
-            if not (is_overdue or is_due_soon):
                 continue
 
             if task.status == "blocked":
@@ -1061,6 +1063,9 @@ def chase_now(owner_name: str) -> dict:
                               "not another ping",
                 })
                 continue
+
+            hours_left = _hours_between(task.deadline, now)
+            is_overdue = hours_left is not None and hours_left < 0
 
             info = _task_dict(session, task, now)
             matched.append({
@@ -1088,9 +1093,9 @@ def chase_now(owner_name: str) -> dict:
             result["telegram_error"] = telegram_error
         if not matched:
             result["message"] = (
-                f"'{owner.name}' has no overdue or due-soon task eligible to chase right now."
+                f"'{owner.name}' has no open task to chase right now."
                 if not skipped else
-                f"'{owner.name}'s only eligible task(s) are blocked — that needs the manager, not a ping."
+                f"'{owner.name}'s only open task(s) are blocked — that needs the manager, not a ping."
             )
         return result
 

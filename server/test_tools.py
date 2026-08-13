@@ -294,7 +294,7 @@ def main():
     check("high-priority task past its 1h floor is chased again", t_hi in chase_ids2)
     check("medium-priority task still under its 6h floor is not", t_med not in chase_ids2)
 
-    # ── chase_now: manual, floor-bypassing chase of one named person ───────
+    # ── chase_now: manual override, bypasses floor AND the due-soon window ──
     forced = tools.chase_now("Dana")
     check("chase_now bypasses the floor for a just-pinged task", any(t["task_id"] == t_late for t in forced["tasks"]))
     check("chase_now reports the owner as reachable", forced["reachable"] is True)
@@ -302,6 +302,22 @@ def main():
     check("chase_now flags an unlinked owner instead of silently returning nothing", unreachable_chase["reachable"] is False)
     check("...with their link code included", unreachable_chase.get("link_code"))
     check("chase_now on an unknown person errors", "error" in tools.chase_now("Nobody At All"))
+
+    ivan = tools.register_person("Ivan")
+    fake.push("556073", f"/start {ivan['link_code']}")
+    tools.telegram_get_updates()
+    far_future = (_dt.now(_tz) + _td(days=30)).replace(microsecond=0).isoformat()
+    t_far = tools.create_task("Way out task", "Ivan", "low", deadline=far_future)["task_id"]
+    t_nodl = tools.create_task("No deadline task", "Ivan", "low")["task_id"]
+    plan_ivan = tools.get_chase_plan()
+    check(
+        "the scheduled sweep correctly ignores a task 30 days out",
+        t_far not in [c["task_id"] for c in plan_ivan["to_chase"]],
+    )
+    forced_ivan = tools.chase_now("Ivan")
+    forced_ivan_ids = [t["task_id"] for t in forced_ivan["tasks"]]
+    check("chase_now includes a task 30 days out — the window doesn't apply to a manual request", t_far in forced_ivan_ids)
+    check("chase_now includes a task with no deadline at all", t_nodl in forced_ivan_ids)
 
     # Escalation instead of a fourth ping — needs to reach max_unanswered (3).
     for _ in range(3):
