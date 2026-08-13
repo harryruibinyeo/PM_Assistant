@@ -25,6 +25,7 @@ mcp = MCPServer(name="pm-chaser")
 # the scheduled runs, and each replaces a chain of five-plus calls that the
 # local model could not reliably complete.
 mcp.add_tool(tools.get_chase_plan)
+mcp.add_tool(tools.chase_now)
 mcp.add_tool(tools.get_digest_data)
 
 mcp.add_tool(tools.create_task)

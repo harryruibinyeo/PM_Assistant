@@ -69,7 +69,10 @@ class Task(Base):
     description = Column(String, nullable=True)
     owner_id = Column(Integer, ForeignKey("people.id"), nullable=False)
     deadline = Column(DateTime, nullable=True)
-    priority = Column(String, nullable=False, default="normal")  # "low" | "normal" | "high"
+    priority = Column(String, nullable=False, default="medium")  # "low" | "medium" | "high"
+    # Required at the tool layer (create_task has no default) — it drives
+    # chase's per-task re-ping floor, so a task without a real priority
+    # decision would silently get chased on an arbitrary cadence.
     status = Column(String, nullable=False, default="not_started")
     # "not_started" | "in_progress" | "blocked" | "done" | "cancelled"
     progress_pct = Column(Integer, nullable=False, default=0)

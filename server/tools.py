@@ -53,6 +53,19 @@ _LINK_CODE_ALPHABET = string.ascii_uppercase + string.digits
 OPEN_STATUSES = ("not_started", "in_progress", "blocked")
 CLOSED_STATUSES = ("done", "cancelled")
 
+# Priority now drives how often a task gets re-chased (get_chase_plan below),
+# not just display ordering — so it's validated on the way in rather than
+# accepting any string silently.
+VALID_PRIORITIES = ("low", "medium", "high")
+_PRIORITY_CHASE_FLOOR_HOURS = {"high": 1, "medium": 6, "low": 24}
+
+
+def _validate_priority(priority: str) -> str | None:
+    """None if valid, else an error message."""
+    if priority not in VALID_PRIORITIES:
+        return f"priority must be one of {VALID_PRIORITIES}, got '{priority}'."
+    return None
+
 
 def _generate_link_code(length: int = 6) -> str:
     return "".join(random.choices(_LINK_CODE_ALPHABET, k=length))
@@ -183,8 +196,8 @@ def _task_dict(session, task: Task, now: datetime | None = None) -> dict:
 def create_task(
     title: str,
     owner_name: str,
+    priority: str,
     deadline: str | None = None,
-    priority: str = "normal",
     description: str | None = None,
 ) -> dict:
     """Create a new task assigned to a person who has already been registered.
@@ -193,11 +206,18 @@ def create_task(
         title: Short task title.
         owner_name: Name of the person who owns this task (must already be
             registered via register_person). Case-insensitive.
+        priority: "low", "medium", or "high" — required, not optional. Drives
+            how often get_chase_plan will re-chase this task (high: every 1h,
+            medium: every 6h, low: every 24h), so it must be a deliberate
+            decision, not a default guessed on the caller's behalf.
         deadline: ISO 8601 datetime. If it has no timezone offset it is read as
             LOCAL time, e.g. "2026-08-10T17:00:00" means 5pm local.
-        priority: "low", "normal", or "high".
         description: Optional longer description.
     """
+    priority_error = _validate_priority(priority)
+    if priority_error:
+        return {"error": priority_error}
+
     with session_scope() as session:
         owner = _find_person_by_name(session, owner_name)
         if owner is None:
@@ -289,10 +309,16 @@ def update_task(
             Setting "done" also forces progress_pct to 100.
         progress_pct: 0-100.
         deadline: New ISO 8601 deadline (naive = local time, as in create_task).
-        priority: "low", "normal", or "high".
+        priority: "low", "medium", or "high" — changes this task's chase
+            re-ping floor (see create_task).
         title: New title.
         owner_name: Reassign to a different registered person.
     """
+    if priority is not None:
+        priority_error = _validate_priority(priority)
+        if priority_error:
+            return {"error": priority_error}
+
     with session_scope() as session:
         task = session.get(Task, task_id)
         if task is None:
@@ -757,12 +783,11 @@ def resolve_unmatched(unmatched_id: int, task_id: int | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # 11. get_chase_plan
 # ---------------------------------------------------------------------------
-_PRIORITY_RANK = {"high": 0, "normal": 1, "low": 2}
+_PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
 def get_chase_plan(
     due_soon_hours: int = 24,
-    min_hours_between_pings: int = 4,
     max_unanswered: int = 3,
 ) -> dict:
     """Do a whole chase check's worth of gathering and filtering in one call.
@@ -794,8 +819,12 @@ def get_chase_plan(
 
     Args:
         due_soon_hours: How far ahead counts as "due soon".
-        min_hours_between_pings: Never re-ping the same task inside this window.
         max_unanswered: Escalate instead of chasing at this many unanswered pings.
+
+    The re-ping floor is no longer a flat window — it now depends on each
+    task's priority (high: 1h, medium: 6h, low: 24h), so an urgent task gets
+    followed up on far sooner than a low-priority one. See chase_now for a
+    manual, floor-bypassing chase of one named person on demand.
     """
     updates = telegram_get_updates()
     telegram_error = updates.get("error")
@@ -875,12 +904,13 @@ def get_chase_plan(
                 continue
 
             since = info["hours_since_last_checkin"]
-            if since is not None and since < min_hours_between_pings:
+            floor = _PRIORITY_CHASE_FLOOR_HOURS.get(task.priority, 6)
+            if since is not None and since < floor:
                 skipped.append({
                     "task_id": task.id,
                     "title": task.title,
                     "owner_name": info["owner_name"],
-                    "reason": f"pinged {since}h ago, under the {min_hours_between_pings}h floor",
+                    "reason": f"pinged {since}h ago, under the {floor}h floor for {task.priority} priority",
                 })
                 continue
 
@@ -965,6 +995,104 @@ def get_chase_plan(
             bits.append(f"{len(plan['unreachable'])} unreachable owner(s)")
         plan["summary"] = "; ".join(bits) if bits else "nothing to do this run"
         return plan
+
+
+# ---------------------------------------------------------------------------
+# 11b. chase_now
+# ---------------------------------------------------------------------------
+def chase_now(owner_name: str) -> dict:
+    """Force an immediate chase for one named person right now, bypassing
+    the re-ping floor and the escalation threshold — this is a deliberate
+    manual override (e.g. the manager typing "chase Henry now"), distinct
+    from get_chase_plan's scheduled sweep.
+
+    Still respects: a task must be overdue or due soon to be worth chasing at
+    all, a blocked task is excluded (it needs the manager, not another ping —
+    same reasoning as get_chase_plan), and an owner who hasn't linked
+    Telegram can't be reached regardless. Unlike get_chase_plan, this returns
+    every matching task for this one person rather than just their single
+    most urgent one — write ONE message covering all of them, the same way
+    an escalation entry covers every task for one person in a single message.
+
+    Args:
+        owner_name: The person to chase. Must already be registered.
+    """
+    updates = telegram_get_updates()
+    telegram_error = updates.get("error")
+
+    with session_scope() as session:
+        owner = _find_person_by_name(session, owner_name)
+        if owner is None:
+            return {"error": f"No registered person named '{owner_name}'."}
+
+        if not owner.telegram_chat_id:
+            return {
+                "owner_name": owner.name,
+                "reachable": False,
+                "tasks": [],
+                "link_code": owner.link_code,
+                "link_url": telegram_client.build_link_url(owner.link_code),
+                "message": f"'{owner.name}' has not linked Telegram and cannot be messaged.",
+            }
+
+        now = _now()
+        due_soon_hours = 24
+        tasks = session.execute(select(Task).where(Task.owner_id == owner.id)).scalars().all()
+
+        matched: list[dict] = []
+        skipped: list[dict] = []
+        for task in tasks:
+            if task.status in CLOSED_STATUSES:
+                continue
+            if not task.deadline:
+                continue
+
+            hours_left = _hours_between(task.deadline, now)
+            is_overdue = hours_left is not None and hours_left < 0
+            is_due_soon = hours_left is not None and 0 <= hours_left <= due_soon_hours
+            if not (is_overdue or is_due_soon):
+                continue
+
+            if task.status == "blocked":
+                skipped.append({
+                    "task_id": task.id,
+                    "title": task.title,
+                    "reason": "blocked — needs the manager to unblock or reschedule, "
+                              "not another ping",
+                })
+                continue
+
+            info = _task_dict(session, task, now)
+            matched.append({
+                "task_id": task.id,
+                "title": task.title,
+                "deadline_local": info["deadline_local"],
+                "hours_overdue": round(-hours_left, 2) if is_overdue else 0,
+                "hours_until_deadline": hours_left,
+                "priority": task.priority,
+                "status": task.status,
+                "progress_pct": task.progress_pct,
+                "unanswered_checkin_count": info["unanswered_checkin_count"],
+                "previously_chased": info["total_checkins"] > 0,
+            })
+
+        matched.sort(key=lambda c: (-c["hours_overdue"], _PRIORITY_RANK.get(c["priority"], 1)))
+
+        result = {
+            "owner_name": owner.name,
+            "reachable": True,
+            "tasks": matched,
+            "skipped": skipped,
+        }
+        if telegram_error:
+            result["telegram_error"] = telegram_error
+        if not matched:
+            result["message"] = (
+                f"'{owner.name}' has no overdue or due-soon task eligible to chase right now."
+                if not skipped else
+                f"'{owner.name}'s only eligible task(s) are blocked — that needs the manager, not a ping."
+            )
+        return result
 
 
 # ---------------------------------------------------------------------------

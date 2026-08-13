@@ -83,8 +83,14 @@ def main():
 
     # ── timezone ──────────────────────────────────────────────────────────
     # Naive input must be read as LOCAL time, not UTC.
-    task = tools.create_task("Q3 report", "alice", deadline="2026-08-10T17:00:00", priority="high")
+    task = tools.create_task("Q3 report", "alice", "high", deadline="2026-08-10T17:00:00")
     check("create_task accepts a lowercase owner name", "task_id" in task)
+    try:
+        tools.create_task("No priority", "Alice")
+        check("priority is required", False)
+    except TypeError:
+        check("priority is required", True)
+    check("priority must be a valid value", "error" in tools.create_task("Bad priority", "Alice", "urgent"))
     check(
         "naive deadline is stored as local 17:00, not UTC",
         task["deadline_local"].startswith("2026-08-10T17:00:00"),
@@ -96,8 +102,8 @@ def main():
     check("unlinked owner produces a warning", "warning" in task)
     task_a = task["task_id"]
 
-    task_b = tools.create_task("Slide deck", "Alice", deadline="2026-08-11T12:00:00")["task_id"]
-    check("create_task for unknown owner errors", "error" in tools.create_task("X", "Nobody"))
+    task_b = tools.create_task("Slide deck", "Alice", "medium", deadline="2026-08-11T12:00:00")["task_id"]
+    check("create_task for unknown owner errors", "error" in tools.create_task("X", "Nobody", "medium"))
 
     # ── linking ───────────────────────────────────────────────────────────
     fake.push(ALICE_CHAT, "/start")                      # Telegram's own auto-message
@@ -235,11 +241,11 @@ def main():
     # computed relative to now rather than hard-coded to a date that drifts.
     soon = (_dt.now(_tz) + _td(hours=12)).replace(microsecond=0).isoformat()
 
-    t_late = tools.create_task("Very late thing", "Dana", deadline="2020-01-01T09:00:00", priority="high")["task_id"]
-    t_soon = tools.create_task("Due shortly", "Dana", deadline=soon)["task_id"]
-    t_erin = tools.create_task("Erin's late thing", "Erin", deadline="2021-01-01T09:00:00")["task_id"]
-    t_none = tools.create_task("No deadline at all", "Erin")["task_id"]
-    t_carol = tools.create_task("Carol is unlinked", "Carol", deadline="2020-06-01T09:00:00")["task_id"]
+    t_late = tools.create_task("Very late thing", "Dana", "high", deadline="2020-01-01T09:00:00")["task_id"]
+    t_soon = tools.create_task("Due shortly", "Dana", "medium", deadline=soon)["task_id"]
+    t_erin = tools.create_task("Erin's late thing", "Erin", "medium", deadline="2021-01-01T09:00:00")["task_id"]
+    t_none = tools.create_task("No deadline at all", "Erin", "low")["task_id"]
+    t_carol = tools.create_task("Carol is unlinked", "Carol", "medium", deadline="2020-06-01T09:00:00")["task_id"]
 
     plan = tools.get_chase_plan()
     chase_ids = [c["task_id"] for c in plan["to_chase"]]
@@ -261,10 +267,46 @@ def main():
     check("a just-pinged task is not re-chased", t_late not in [c["task_id"] for c in plan["to_chase"]])
     check("...and the reason names the floor", any(s["task_id"] == t_late and "floor" in s["reason"] for s in plan["skipped"]))
 
+    # ── priority-differentiated floor (high: 1h, medium: 6h) ───────────────
+    # Fresh, otherwise-untouched owners — not Dana/Erin, whose outstanding-
+    # ping state later tests (reply-matching, escalation) depend on staying
+    # exactly as it is.
+    frank = tools.register_person("Frank")
+    fake.push("556070", f"/start {frank['link_code']}")
+    grace = tools.register_person("Grace")
+    fake.push("556071", f"/start {grace['link_code']}")
+    tools.telegram_get_updates()
+
+    t_hi = tools.create_task("Urgent thing", "Frank", "high", deadline="2020-01-01T09:00:00")["task_id"]
+    t_med = tools.create_task("Routine thing", "Grace", "medium", deadline="2020-01-01T09:00:00")["task_id"]
+    tools.telegram_send_message("Frank", "ping", task_id=t_hi)
+    tools.telegram_send_message("Grace", "ping", task_id=t_med)
+
+    from sqlalchemy import select as _select
+    from models import CheckIn as _CheckIn, session_scope as _session_scope, utcnow as _utcnow
+    with _session_scope() as _s:
+        for _tid in (t_hi, t_med):
+            _ci = _s.execute(_select(_CheckIn).where(_CheckIn.task_id == _tid)).scalars().first()
+            _ci.sent_at = _utcnow() - _td(hours=2)
+
+    plan = tools.get_chase_plan()
+    chase_ids2 = [c["task_id"] for c in plan["to_chase"]]
+    check("high-priority task past its 1h floor is chased again", t_hi in chase_ids2)
+    check("medium-priority task still under its 6h floor is not", t_med not in chase_ids2)
+
+    # ── chase_now: manual, floor-bypassing chase of one named person ───────
+    forced = tools.chase_now("Dana")
+    check("chase_now bypasses the floor for a just-pinged task", any(t["task_id"] == t_late for t in forced["tasks"]))
+    check("chase_now reports the owner as reachable", forced["reachable"] is True)
+    unreachable_chase = tools.chase_now("Carol")
+    check("chase_now flags an unlinked owner instead of silently returning nothing", unreachable_chase["reachable"] is False)
+    check("...with their link code included", unreachable_chase.get("link_code"))
+    check("chase_now on an unknown person errors", "error" in tools.chase_now("Nobody At All"))
+
     # Escalation instead of a fourth ping — needs to reach max_unanswered (3).
     for _ in range(3):
         tools.telegram_send_message("Erin", "checking in", task_id=t_erin)
-    plan = tools.get_chase_plan(min_hours_between_pings=0)
+    plan = tools.get_chase_plan()
     # to_escalate is grouped one entry per owner, each holding a list of tasks.
     check(
         "3 unanswered pings escalates instead of chasing",
@@ -279,10 +321,14 @@ def main():
 
     # ── blocked tasks: not chased, surfaced to the manager instead ────────
     tools.update_task(t_late, status="blocked")
-    plan = tools.get_chase_plan(min_hours_between_pings=0)
+    plan = tools.get_chase_plan()
     check("a blocked task is not chased", t_late not in [c["task_id"] for c in plan["to_chase"]])
     check("...and the reason says it needs the manager",
           any(s["task_id"] == t_late and "manager" in s["reason"] for s in plan["skipped"]))
+    forced_blocked = tools.chase_now("Dana")
+    check("chase_now also excludes a blocked task, even with the floor bypassed",
+          all(t["task_id"] != t_late for t in forced_blocked["tasks"]))
+    check("...and says why", any(s["task_id"] == t_late and "manager" in s["reason"] for s in forced_blocked["skipped"]))
 
     d = tools.get_digest_data()
     bl = next((b for b in d["blocked_needing_decision"] if b["task_id"] == t_late), None)
