@@ -1,0 +1,62 @@
+# The local qwen3.6-35b-a3b model genuinely has vision (confirmed via its
+# config.json: a real vision_config, image tokens — this isn't a text-only
+# model). "auto" was routing images through a lossy text pre-analysis step
+# (a separate call producing a 2-4 sentence summary) instead of letting the
+# model see the actual pixels, so follow-up questions couldn't recover any
+# detail beyond that summary. "native" attaches the image directly.
+model:
+  default: qwen/qwen3.6-35b-a3b
+  provider: lmstudio
+  base_url: http://localhost:1234/v1
+  image_input_mode: native
+_config_version: 33
+mcp_servers:
+  pm-chaser:
+    url: http://localhost:18173/mcp
+    enabled: true
+# The global terminal.cwd (".") was resolving to Hermes's own install tree
+# (~/.hermes/hermes-agent), which made every conversation load that repo's
+# 77KB contributor AGENTS.md as if it were this bot's project context —
+# irrelevant noise, truncated mid-content, eating a large token budget every
+# single turn. This is Hermes's own known issue (#64590 in prompt_builder.py's
+# build_context_files_prompt): "explicitly configured cwd is honored
+# verbatim," so an explicit override here bypasses the install-tree fallback
+# guard cleanly. Pointed at this profile's own directory, which has no
+# AGENTS.md/CLAUDE.md/.cursorrules — correctly loads nothing, since this bot
+# has no project context to load in the first place.
+terminal:
+  cwd: /Users/threeporkchops/.hermes/profiles/task-manager-bot
+# This profile's whole toolset (pm-chaser's ~20 tools + Hermes's own
+# built-ins) is small enough to never need the tool_search/tool_describe/
+# tool_call discovery bridge. Left on, the model repeatedly (and
+# unpredictably) tried routing already-directly-callable tools through that
+# bridge anyway — real incidents: telegram_send_message, list_people,
+# create_task, get_assistant_name/set_assistant_name all hit this, each
+# either wasting a minute+ of retries or, worse, giving up and fabricating a
+# success message without ever calling the real tool. Disabling it removes
+# the wrong path entirely rather than relying on prompt wording to prevent
+# the model reaching for it.
+tools:
+  tool_search: false
+onboarding:
+  seen:
+    profile_build_offered: true
+    busy_input_prompt: true
+# This is a narrow, single-purpose task-management bot, not a general
+# assistant — Hermes's generic self-improvement/memory features (periodic
+# "save a memory" / "create a skill" nudges that interrupt the chat with
+# unrelated messages) are disabled so the manager only ever sees pm-chaser
+# content.
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+  nudge_interval: 0
+skills:
+  creation_nudge_interval: 0
+# Hermes's default sends mid-turn "status update" text as separate visible
+# messages, meant to reassure the user something's happening during a long
+# turn. For this bot it instead leaked internal tool-call retry narration
+# ("I need to pass the parameters inside an arguments object") straight to
+# the manager — disabled so only the final, deliberate reply is ever sent.
+display:
+  interim_assistant_messages: false

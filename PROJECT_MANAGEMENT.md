@@ -2,83 +2,100 @@
 
 This file is the running history of this project: what was done, in what order, and *why* — including the setup work that happened before this repo existed. New entries get added as the build progresses. Anything technical is explained inline so this reads clearly without already knowing the jargon.
 
+**Read this note before trusting the "Architecture and tech stack" section below at face value in the future**: it describes the system *as of 2026-08-14*. The dated entries further down are the permanent historical record — including entries about Odysseus and Kubernetes, both since replaced — kept exactly as written even after being superseded, because they explain the reasoning trail that led here. If this section and a dated entry ever disagree, the **most recent dated entry is correct**; update this section to match rather than trusting it blindly.
+
 ---
 
 # Architecture and tech stack
 
 ## What this is
 
-An AI agent that tracks who owes what by when, chases people on Telegram for status updates, understands their free-text replies, and reports to the manager once a day. Everything runs locally — no cloud AI service is involved.
+An AI agent that tracks who owes what by when, chases people on Telegram for status updates, understands their free-text replies, and reports to the manager — plus, as of 2026-08-14, a fuller personal-assistant surface for the manager: bulk task intake from files, meeting-minutes extraction, and a chosen conversational persona. Everything runs locally — no cloud AI service is involved.
 
-## How the pieces fit together
+## How the pieces fit together (current, 2026-08-14)
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────┐
-│ macOS host  (Apple Silicon, 48 GB unified memory)                             │
-│                                                                               │
-│   ┌─────────────────────────────┐                                             │
-│   │ LM Studio   (native, Metal) │   All reasoning happens here.               │
-│   │ Qwen3.6-27B-MLX-4bit        │   Runs OUTSIDE Docker because containers    │
-│   └──────────────▲──────────────┘   on macOS cannot reach the GPU.            │
-│                  │                                                            │
-│                  │ HTTP · host.docker.internal:1234/v1                        │
-│   ┌──────────────┼────────────────────────────────────────────────────────┐   │
-│   │ Docker Desktop — ONE shared internal Linux VM                          │  │
-│   │              │                                                         │  │
-│   │  ┌───────────┴──────────────┐         ┌───────────────────────────┐    │  │
-│   │  │ docker compose           │         │ Kubernetes  (kind)        │    │  │
-│   │  │                          │  MCP    │ namespace: pm-chaser      │    │  │
-│   │  │  ODYSSEUS  (unmodified)  │ ──────► │                           │    │  │
-│   │  │   ├ scheduler (cron)     │  HTTP   │  pm-chaser-mcp   (pod)    │    │  │
-│   │  │   ├ agent loop           │ ◄────── │   ├ 11 MCP tools          │    │  │
-│   │  │   ├ Skills store         │         │   └ SQLite  (on a PVC)    │    │  │
-│   │  │   ├ MCP client           │         │                           │    │  │
-│   │  │   └ crew tool-allowlist  │         │  Service: LoadBalancer    │    │  │
-│   │  │                          │         │  172.19.0.5:8000          │    │  │
-│   │  │  chromadb · searxng      │         │  Secret · ConfigMap · PVC │    │  │
-│   │  └──────────────────────────┘         └─────────────┬─────────────┘    │  │
-│   └─────────────────────────────────────────────────────┼──────────────────┘  │
-└─────────────────────────────────────────────────────────┼─────────────────────┘
-                                                          │ HTTPS
-                                                          ▼
-                                              ┌───────────────────────┐
-                                              │   Telegram Bot API    │
-                                              └───────────┬───────────┘
-                                          ┌───────────────┴───────────────┐
-                                          ▼                               ▼
-                                   Jeffrey  (PM)                  Henry  (employee)
-                                   assigns work in Odysseus       gets chased, replies
-                                   receives digests + escalations in plain language
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ macOS host  (Apple Silicon, 48 GB unified memory)                            │
+│                                                                                │
+│   ┌───────────────────────────────┐                                          │
+│   │ LM Studio  (native, Metal)     │   All reasoning happens here.           │
+│   │ qwen/qwen3.6-35b-a3b (MoE)     │   Runs OUTSIDE Docker — containers      │
+│   └───────────────▲─────────────────┘   on macOS cannot reach the GPU.        │
+│                   │ HTTP · localhost:1234/v1                                 │
+│        ┌──────────┴───────────────────────────────────┐                     │
+│        │                                                 │                    │
+│  ┌─────┴───────────────────────┐        ┌───────────────┴──────────────────┐ │
+│  │ Hermes Agent                 │        │ Hermes Agent                     │ │
+│  │ profile: task-manager-bot    │        │ profile: pmchaser-bot            │ │
+│  │ (launchd-supervised gateway) │        │ (launchd-supervised, cron-only)  │ │
+│  │                               │        │                                   │ │
+│  │ Live Telegram conversation,   │        │ No live gateway of its own —     │ │
+│  │ own bot + token:              │        │ two Hermes cron jobs:            │ │
+│  │  @taskmanager_...bot          │        │  task-chaser  — every 15 min     │ │
+│  │                               │        │  task-digest  — daily 09:00      │ │
+│  │ Talks ONLY to Jeffrey         │        │                                   │ │
+│  │ ("boss"), 1:1. Persona: Toby  │        │ Sends via pm-chaser-mcp's OWN    │ │
+│  │ or Abby, manager's choice,    │        │ chase-bot token — not its own    │ │
+│  │ persisted in BotState.        │        │ gateway/token at all.            │ │
+│  └───────────────┬───────────────┘        └────────────────┬──────────────────┘ │
+│                  │              MCP · streamable-http         │                  │
+│                  └───────────────────────┬─────────────────────┘                 │
+│                                          ▼                                       │
+│                          ┌────────────────────────────────────┐                 │
+│                          │ pm-chaser-mcp                        │                │
+│                          │ Plain Docker container                │               │
+│                          │ (--restart=always), port 18173→8000   │               │
+│                          │  ~20 MCP tools (task CRUD, chase       │               │
+│                          │   planning, Telegram I/O, persona)     │               │
+│                          │  SQLite on a named Docker volume       │               │
+│                          │  Holds BOTH bot tokens:                │               │
+│                          │   TELEGRAM_BOT_TOKEN (chase bot)       │               │
+│                          │   TASK_MANAGER_BOT_TOKEN (rename-only) │               │
+│                          └──────────────────┬─────────────────────┘               │
+└─────────────────────────────────────────────┼─────────────────────────────────────┘
+                                              │ HTTPS
+                                              ▼
+                                  ┌───────────────────────┐
+                                  │   Telegram Bot API     │
+                                  └───────────┬─────────────┘
+                             ┌────────────────┴─────────────────┐
+                             ▼                                    ▼
+                    @taskmanager_...bot                   @pmchaser_...bot
+                             │                                    │
+                             ▼                                    ▼
+                      Jeffrey (manager)                Henry, Jeffyeo, ... (employees)
+                      creates/chases/reviews,           get chased, replies interpreted,
+                      talks to "Toby"/"Abby"             extensions routed back to manager
 ```
 
-Two connection details are non-obvious and both cost time to discover:
+Two connection details that replaced the old Odysseus/Kubernetes ones (see the historical entries below for the full story of what came before):
 
-- **Odysseus reaches LM Studio via `host.docker.internal`** — a bridge from a container *out to the Mac*. That works because LM Studio runs natively on the host.
-- **Odysseus reaches `pm-chaser-mcp` via a `LoadBalancer` IP, not `host.docker.internal` and not `NodePort`.** Both live inside Docker Desktop's single Linux VM, on different internal networks that can already route to each other. `NodePort` is never exposed to the Mac at all under a kind cluster. See Step 2 for the full three-layer explanation.
+- **Two separate Telegram bots, not one.** `@taskmanager_...bot` is manager-only, restricted by `TELEGRAM_ALLOWED_USERS`; `@pmchaser_...bot` is the original employee-facing chase bot, used both by the scheduled cron and by `task-manager-bot`'s own `chase_now`/`telegram_send_message` calls. They share nothing except both being registered with `pm-chaser-mcp`.
+- **`pm-chaser-mcp` is a plain Docker container, not a Kubernetes Service** — migrated off Kubernetes 2026-08-14 (see that day's entry). Both Hermes profiles reach it at a fixed local port (`18173`), no LoadBalancer IP, no drift.
 
 ## The stack, and why each piece is there
 
 | Layer | Choice | Why this one |
 |---|---|---|
-| Reasoning | **Qwen3.6-27B-MLX-4bit** via **LM Studio** | Runs on-device on Metal. Writes every message, interprets every reply. No cloud API. |
-| Agent runtime | **Odysseus** (third-party, AGPL, **unmodified**) | Already had a cron scheduler, an agent loop, an MCP client and a Skills system. Rebuilding those would have been the bulk of the work. |
-| Agent instructions | **Skills** (`SKILL.md`) | Plain-markdown procedures injected into the agent's context — tone, escalation rules, pitfalls. No code. |
-| New capability | **`pm-chaser-mcp`** (Python 3.12, `mcp` 2.0 SDK) | The only new service. Exposes 11 tools over MCP's `streamable-http` transport. |
-| Data | **SQLite** + **SQLAlchemy** | Single file, no server. Four tables: `Person`, `Task`, `CheckIn`, `UnmatchedMessage`. |
-| Messaging | **Telegram Bot API** via **`httpx2`** | Just two calls — `sendMessage`, `getUpdates`. A full bot framework assumes a long-lived listener, which is the wrong shape: Telegram is only polled when a scheduled run asks. |
-| Hosting | **Kubernetes** (Docker Desktop / kind) | Restarts the service if it dies, keeps the database on a `PersistentVolumeClaim`, holds the bot token in a `Secret`. Only this one service runs here — Odysseus stays on `docker compose`. |
-| Scheduling | Odysseus **ScheduledTask** (cron) + **CrewMember** allowlist | Chase every 30 min, digest at 09:00. The crew allowlist cuts the model's tool surface from 71 tools to 13, which is what made tool-calling reliable. |
+| Reasoning | **`qwen/qwen3.6-35b-a3b`** (MoE, ~3B active params) via **LM Studio** | Replaced the original dense 27B model 2026-08-07 — same rough memory footprint, ~5x faster, since Apple Silicon inference is memory-bandwidth-bound and MoE only reads its active experts per token. |
+| Agent runtime | **Hermes Agent** (`github.com/NousResearch/hermes-agent`), two isolated profiles | Replaced both Odysseus (decommissioned 2026-08-12) and the original hand-written `agent/run.py`/`agent/pm_bot.py` (deleted 2026-08-14) — an existing framework already had a scheduler, MCP client, Telegram gateway, and skills system, so a third bespoke agent runtime wasn't worth building. |
+| Agent instructions | `SOUL.md` (`task-manager-bot`) + `SKILL.md` (`pmchaser-bot`'s `task-chaser`/`task-digest`) | Same idea as the original Skills, ported to Hermes's own convention — plain-language procedure, pitfalls, worked examples, no code. **Lives entirely in `~/.hermes`, which is NOT a git repo** — see the "documentation and tracking" entry near the end of this file. |
+| New capability | **`pm-chaser-mcp`** (Python 3.12, `mcp` 2.0 SDK) | Grew from the original 7 tools to ~20 — task CRUD, chase planning, Telegram I/O, and now assistant-persona settings too. |
+| Data | **SQLite** + **SQLAlchemy** | Same as always — `Person`, `Task`, `CheckIn`, `UnmatchedMessage`, `BotState` — plus `Task.manager_id` (added 2026-08-14, multi-manager groundwork) and `BotState.assistant_name` (persona feature). |
+| Messaging | **Telegram Bot API** via **`httpx2`**, two separate bot tokens | Just a handful of calls — `sendMessage`, `getUpdates`, and now `setMyName`. Still no full bot framework — the wrong shape for a service that's only ever called into by tool calls, never listening on its own. |
+| Hosting | **Plain Docker** (`--restart=always`), **not Kubernetes** | Migrated off Kubernetes 2026-08-14 after the LoadBalancer-IP-drift failure class kept recurring with no Odysseus left to justify the added complexity — see that day's entry for the full reasoning and tradeoff. |
+| Scheduling | **Hermes's own cron**, on the `pmchaser-bot` profile | Replaced `launchd` (`com.pmchaser.chase`/`digest`) — chase every 15 min (tightened from the original 30), digest daily 09:00. |
 
-## How one chase actually flows
+## How one chase actually flows (current)
 
-1. **Odysseus's scheduler** fires the cron job and starts an agent run — no human involved.
-2. The **crew allowlist** strips Odysseus's 60 built-in tools down to 2, leaving the model ~13 tools total instead of 71.
-3. The agent calls **`get_chase_plan()`** — one call. The service polls Telegram, files anything that arrived, applies every rule in Python (re-ping floor, escalation threshold, blocked-task exclusion, unreachable owners, one-task-per-person) and returns a finished shortlist.
-4. For any reply, the agent **reads what it means** — *"waiting on the finance sheet"* → `blocked` — and calls `update_task`.
-5. For anything to chase, the agent **writes the message itself** and calls `telegram_send_message(..., task_id=...)`, which sends it and records the check-in atomically.
-6. **`pm-chaser-mcp`** calls Telegram; the message lands on the employee's phone.
-7. Their reply is picked up on the next run, matched back to the task by Telegram's reply-threading (or flagged as ambiguous rather than guessed).
-8. Once a day, **`get_digest_data()`** feeds the same agent a summary for the manager — including blocked work needing a decision.
+1. **Hermes's cron** fires the `task-chaser` skill on the `pmchaser-bot` profile — no human involved.
+2. The agent calls **`get_chase_plan()`** — one call. The service polls Telegram, files anything that arrived, applies every rule in Python (priority-based re-ping floor, escalation threshold, blocked-task exclusion, unreachable owners, one-task-per-person) and returns a finished shortlist — same one-call-does-everything design as the original, still the load-bearing idea in this whole project.
+3. For any reply, the agent **reads what it means** — *"waiting on the finance sheet"* → `blocked`, *"push it to 9pm"* → also `blocked` (an extension request is never self-granted, see 2026-08-14) — and calls `update_task`, then sends a brief acknowledgment back to the person.
+4. For anything to chase, the agent **writes the message itself** and calls `telegram_send_message(..., task_id=...)`, which sends it and records the check-in atomically.
+5. Their reply is picked up on the next run, matched back to the task by Telegram's reply-threading (or flagged as ambiguous rather than guessed).
+6. Separately, the manager can trigger any of this on demand through `task-manager-bot`: `chase_now`, a live "did X reply?" check, or the full digest — without waiting for the next scheduled tick.
+7. Once a day (or on demand), **`get_digest_data()`** feeds the manager a summary — including blocked work needing a decision.
 
 ## The dividing line that shapes everything
 
@@ -552,3 +569,127 @@ Incomplete create request → clarifying question, not a guess. Unregistered own
 - `pm_bot.py` has only been run manually in the foreground for testing — **not yet installed as a `launchd` KeepAlive service.** That's the next concrete step before Odysseus can be decommissioned.
 - Database reset twice during testing (all tasks/check-ins/unmatched messages cleared via direct DB access on the pod; people left untouched per instruction) — treat current task data as fresh test data, not historical.
 - Odysseus is still running and still capable of creating tasks — deliberately not decommissioned yet. Per the user: only do that once `pm_bot.py` is verified fully working, which is close but not yet declared done (the `launchd` install + a longer unattended stretch are the remaining bar).
+
+---
+
+## 2026-08-12 — Migrated to Hermes Agent; Odysseus decommissioned
+
+Hermes Agent (`github.com/NousResearch/hermes-agent`, AGPL) was found already installed and running on this Mac — an existing "DJ Fatty" Telegram bot on its `default` profile — rather than deliberately set up for this project. Model-agnostic, so it reuses the same local LM Studio backend already in use. Trial-migrated pm-chaser onto it via two new, fully isolated profiles rather than continuing with the hand-rolled `agent/run.py`/`agent/pm_bot.py` pair:
+
+- **`task-manager-bot`** — replaces `pm_bot.py`. A real, native Telegram gateway (own bot token, `TELEGRAM_ALLOWED_USERS` restricted to the manager's chat ID) with genuine multi-turn conversation, driven by a `SOUL.md` instructions file (Hermes's equivalent of the old `SKILL.md`).
+- **`pmchaser-bot`** — replaces `agent/run.py`. Hosts the scheduled `task-chaser`/`task-digest` cron jobs. No Telegram gateway of its own — sends go through `pm-chaser-mcp`'s own chase-bot token via MCP tool calls, same tool surface `task-manager-bot` also uses.
+
+**Odysseus decommissioned** — data preserved, fully reversible, but no longer running as part of this project.
+
+**Real gotchas found migrating, worth knowing if this pattern is ever repeated:**
+- Docker Desktop's Kubernetes had a **separate image cache** from plain `docker build` under `UseContainerdSnapshotter: true` — a rebuilt image silently kept running stale code until a privileged debug-pod workaround forced a real update.
+- Both profiles needed `memory.memory_enabled`/`user_profile_enabled: false` and `nudge_interval: 0` — Hermes's own self-improvement background review otherwise wrote stray skill/memory files unprompted.
+- `task-manager-bot` additionally needed `display.interim_assistant_messages: false`, or mid-turn tool-retry narration ("I need to pass the parameters inside an arguments object") leaked to the manager as visible messages.
+- **Editing `SOUL.md`/skills mid-conversation does not retroactively apply to an already-open session** — only `/reset` or a new conversation picks up file edits. (Refined further on 2026-08-14 — see the reliability-crisis entry: this turned out to be true for prompt files, but a *config.yaml* change needs an actual process restart, not just a `/reset`.)
+
+---
+
+## 2026-08-14 — Migration to Hermes finalized; old system deleted for good
+
+Treated as final, not a trial: `agent/run.py`, `agent/pm_bot.py`, `agent/common.py` **deleted from the repo** (git history still has them if ever needed), and all three old `launchd` jobs (`com.pmchaser.pmbot`, `com.pmchaser.chase`, `com.pmchaser.digest`) unloaded **and their plists removed** from `~/Library/LaunchAgents/`.
+
+**A real incident that motivated deleting rather than just unloading**: after a Mac reboot, the "retired" `com.pmchaser.pmbot.plist` silently reloaded on its own (`launchctl unload` does not persist across a reboot — it only affects the current session) and started polling Telegram with the **same bot token** `task-manager-bot` uses, causing a real `Conflict: terminated by other getUpdates request` that broke `task-manager-bot`'s gateway for several minutes. **Lesson for any future `launchd` job meant to stay permanently disabled**: `launchctl unload` alone is not durable — either `unload -w` (persist-disable, keeps the plist for a later `load -w` rollback) or delete the plist outright.
+
+---
+
+## 2026-08-14 — Migrated `pm-chaser-mcp` off Kubernetes to plain Docker
+
+After the `kubectl port-forward` tunnel (the connection method `agent/run.py`/`agent/pm_bot.py` had settled on back on 2026-08-07) died a third time — this time from a Mac reboot, costing real Telegram messages during the instability — asked directly: is Kubernetes still earning its keep? Walked through the honest tradeoff: Kubernetes's real value (self-healing across *multiple* nodes, scaling, rolling deploys) needs multiple machines or variable load to matter; on one Mac mini with low traffic, none of that applies, and the one thing actually being used — restart-on-crash — plain Docker gives for free. This reverses the 2026-08-07 decision to keep Kubernetes for portfolio value; the user chose to migrate off it this time.
+
+**What changed:**
+- `pm-chaser-mcp` now runs as `docker run -d --name pm-chaser-mcp --restart=always -p 18173:8000 -v pm-chaser-data:/data --env-file server/.env pm-chaser-mcp:local` — same image, same effective port (`18173→8000`, chosen to match what Hermes already had configured, so **zero config changes needed on either Hermes profile**).
+- The PVC (backed by `rancher.io/local-path` — i.e. already just a directory on the Docker Desktop VM, no real network storage) replaced by a Docker named volume (`pm-chaser-data`). Data migrated via `kubectl cp` out, `docker cp` in; verified row counts matched before and after.
+- `server/.env` gained `PM_CHASER_TZ=Asia/Singapore` (previously supplied by a Kubernetes `ConfigMap`, now needs to live in the same env file as the bot tokens since there's no ConfigMap anymore).
+- The `kubectl port-forward` process was killed — no longer needed at all, Hermes connects directly to the container's published port. This eliminates the entire IP-drift/tunnel-death failure class this project had been fighting since 2026-08-05, not just makes it more durable.
+- Old Kubernetes Deployment scaled to 0 replicas, **not deleted** — Service/PVC/ConfigMap/Secret all still exist if this decision is ever revisited (though the Docker volume would be the authoritative copy of the data by then, not the stale PVC).
+
+**One real gap, deliberately left open**: Docker Desktop itself has `AutoStart: False`, so even with `--restart=always` on the container, nothing comes back automatically after a Mac reboot until Docker Desktop is manually opened first. Offered to fix via a macOS Login Item; **user declined, prefers opening Docker Desktop manually after a reboot**. This is now the one manual step in an otherwise self-healing stack.
+
+---
+
+## 2026-08-14 — Task priority required; on-demand chase and digest added
+
+`create_task` no longer defaults priority — it's now a required argument (`low`/`medium`/`high`; the DB's old `"normal"` middle tier renamed to `"medium"`, a clean-slate rename with no migration needed since task data was wiped alongside it). Priority now directly drives the scheduled chase's re-ping floor: `_PRIORITY_CHASE_FLOOR_HOURS = {"high": 1, "medium": 6, "low": 24}` in `server/tools.py`, replacing the old flat 4-hour floor for everyone. The scheduled chase's own cron interval was tightened from 30 to **15 minutes**, so the hourly high-priority floor lands within 15 minutes of the true mark instead of up to 30.
+
+**New tool: `chase_now(owner_name)`** — a full manual override for `task-manager-bot`, bypassing both the re-ping floor and the due-soon eligibility window (an explicit "chase Henry now" already means the manager decided the timing, not the automated sweep's business). Returns every open task for that person, not just the single most urgent one, unlike the scheduled sweep. **On-demand digest** needed no new tool — `get_digest_data()` already covered it; the only difference is the manager is already in the conversation, so the answer is the model's normal reply rather than a `telegram_send_message` call.
+
+Three real bugs caught live during this build, all fixed the same day — see the reliability-crisis entry further down for the broader pattern these turned out to be an early instance of:
+1. "send chase now" with no name given → the model inferred a target from earlier conversation instead of asking. Fixed with an explicit "ask, don't infer" rule.
+2. `chase_now` wasn't a true override at first — it still silently excluded tasks outside the normal 24h due-soon window. Fixed: an explicit "chase now" bypasses that window too, and includes no-deadline tasks.
+3. The model narrated a send ("Pinged Henry about...") without ever actually calling `telegram_send_message` — the first real instance of the confident-but-false-confirmation pattern that recurred several more times later the same day.
+
+---
+
+## 2026-08-14 — Deadline extensions require the manager, never self-granted
+
+An employee once got a deadline pushed on their own say-so; decided this must never happen automatically — moving a deadline is the manager's call, same principle already established back on 2026-08-05 for blocked tasks. Implemented by reusing the existing `blocked` mechanism rather than adding new state: if an owner's reply asks for more time, the interpreting skill/rule now calls `update_task(status="blocked")` instead of ever passing a new `deadline` — routing it into the same `blocked_needing_decision` digest path already built for real blockers. When the manager approves an extension, `update_task` is called with both the new `deadline` **and** `status="in_progress"` in the same call — approving the extension is also what un-blocks the task, since blocked tasks are permanently skipped by both the scheduled sweep and `chase_now` until their status changes.
+
+**Live-tested for real**: an owner replied "I need an extension to 9pm" to a chase; the scheduled cron correctly resolved an ambiguity (two open check-ins existed at the time) and set the task to `blocked`; the manager then said "approve it," and the bot correctly extended the deadline and un-blocked it in one call.
+
+---
+
+## 2026-08-14 — Multi-manager schema groundwork (not the full feature)
+
+User floated scaling from one manager to several, each with their own employees, some employees potentially shared across managers. Explicit direction: lay groundwork now so adding a second manager later is a quick add-on, but do **not** build the actual multi-manager UX (extra bot profiles, name disambiguation) while there's still only one manager to test against.
+
+**What was built**: `Task.manager_id` — a *second* foreign key to `Person`, separate from `owner_id`, living on the task rather than the person (a person can be a manager on one task and just a contributor on another, and an employee can have tasks under different managers — the shared-employee case). `create_task` auto-resolves it to the sole existing manager when not given explicitly, so today's call sites needed zero changes. `get_chase_plan`'s escalation grouping now keys on `(owner, manager)` instead of just `owner`, so an owner with escalating tasks under two different managers correctly produces two separate entries. Deliberately **not** built: any manager-scoping filter parameter on `get_chase_plan`/`get_digest_data` (today everything still returns the full, unfiltered view — adding a filter is exactly the fast follow-up once a second manager profile exists), and no second bot profile.
+
+**A real regression this caused, found via live testing, not code review**: giving `Task` two foreign keys to `Person` broke SQLAlchemy's ability to auto-resolve which one `Person.tasks` (the reverse relationship) should use — it refused to configure its object mappers at all, silently breaking *every* database-touching tool service-wide (`list_people`, `create_task`, everything), not just anything manager-related. Fixed with one line — `Person.tasks = relationship("Task", back_populates="owner", foreign_keys="Task.owner_id")` — verified via `configure_mappers()` before redeploying. **Lesson for any future schema change adding a second FK between two already-related tables**: `foreign_keys=` needs setting explicitly on *both* sides of the relationship, not just the side being directly edited — SQLAlchemy won't complain until mapper configuration time, which can be well after the responsible edit was made and easy to miss.
+
+---
+
+## 2026-08-14 — Meeting minutes: transcribe/summarize/extract, now from audio, Word docs, PDFs, or pasted text
+
+Built as the first of several "personal assistant" capabilities beyond pure task-chasing (user's original 10-item AI-in-PM checklist had this as priority #1, ahead of action-item tracking which is what the rest of this project already does). Mirrors the existing bulk-file-upload pattern almost exactly: get text from somewhere, summarize it, extract candidate action items (owner via `list_people`, deadline via the same ISO 8601 conversion, a *suggested* priority inferred from the source's own urgency language), one consolidated preview, one explicit yes, then loop `create_task`.
+
+**Sources, and a real premise bug found and fixed**: a native Telegram voice note arrives *already transcribed* into the message text — Hermes's platform layer runs local `faster-whisper` at ingest, before the model ever sees the message. The rule as first written incorrectly told the model to always call a `transcribe_audio` tool itself; live-tested and confirmed via logs that this simply isn't how a voice note reaches the model. Corrected to the real two-case rule: a native voice note needs no tool call at all (already text); a separately *uploaded audio file* (not a voice-note bubble — e.g. a long recording) genuinely isn't auto-transcribed and does need an explicit `transcribe_audio(file_path)` call. Later extended to also accept uploaded Word docs (`docx` skill, copied in from Hermes's own shared skill library — same trust tier as the already-installed `xlsx`/`ocr-and-documents`, not a random registry download) and PDFs (`ocr-and-documents`, already installed), plus plain typed/pasted notes directly in chat, which need no extraction tool at all.
+
+**A real ambiguity resolved between this and the existing bulk-task-creation rule**: that rule already claimed PDF as a trigger format for spreadsheet-style task lists. Adding PDF/Word-doc to the meeting-minutes rule created genuine overlap. Resolved by content, not format: rows/columns of title-owner-deadline routes to bulk task creation; prose/discussion/decisions routes to meeting minutes; ask the manager if genuinely unclear which is meant. Spreadsheets stay unambiguous either way.
+
+---
+
+## 2026-08-14 — The tool-call reliability crisis: root-caused and fixed, not just patched
+
+Across one afternoon, `task-manager-bot` produced three genuinely different wrong-tool-selection failures in quick succession — not one recurring bug repeating, but the model reaching for a different wrong mechanism each time: routing already-directly-callable tools through Hermes's `tool_search`/`tool_describe`/`tool_call` discovery bridge; treating a tool name as an MCP "prompt" via `get_prompt`; calling a semantically wrong tool (`chase_now`) with a missing required argument on a plain "hi." Each produced either 40-70+ second responses, or a confidently fabricated "done" with no real tool call behind it (`set_assistant_name` claimed successful; database unchanged).
+
+**Two real, structural causes found, not "the model is just unreliable":**
+
+1. **`tool_search` was pure unnecessary overhead** for a profile with only ~20 tools total. Traced Hermes's own `tools/tool_search.py`: with the bridge disabled, every tool passes through directly with full schemas, no indirection layer to get lost in. Fixed via `tools: { tool_search: false }` in `task-manager-bot`'s `config.yaml`.
+2. **Every conversation was silently loading a 77KB, wildly irrelevant file as project context**: `~/.hermes/hermes-agent/AGENTS.md` — Hermes's *own* contributor documentation, truncated mid-content every single turn, eating roughly 10K tokens of pure noise. Root cause: the global `terminal.cwd: .` setting was resolving into Hermes's own install tree — a known, documented Hermes issue (referenced in its own `prompt_builder.py` source as bug #64590), whose own suggested fix is to set `terminal.cwd` explicitly. Fixed via `terminal: { cwd: ~/.hermes/profiles/task-manager-bot }` in the same `config.yaml` — that directory has no such file, so it correctly loads nothing (this bot has no "project" to load context from).
+
+**Verified with a real before/after**, using `hermes chat -q "..." --profile task-manager-bot` (non-interactive CLI mode) as a fast, isolated test harness — every claim grepped from real `agent.log` entries plus direct database/Telegram-API verification, not the model's own text response. Before: 57-69 second responses, repeated tool errors, a claimed rename that never actually happened. After both fixes: clean single-tool-call turns, 2-11 seconds total, input tokens down from ~42-43K to ~32K per turn.
+
+**A real operational gotcha found applying the fixes**: `task-manager-bot`'s gateway runs under `launchd`, confirmed by Hermes's own refusal to let a bare re-invocation start ("A gateway is already running under launchd for this profile... leaves an orphan dispatcher... can corrupt [the] DB"). The `tools.tool_search` config re-reads per turn (mtime-cached, confirmed via source), but the `terminal.cwd` fix did **not** take effect on the already-running process — nor did a plain conversation `/reset`, since that only clears history, not the process. The correct fix is `hermes gateway restart` (the supervised command), not a shell re-invocation and not a conversation reset. **Lesson for any future config.yaml change to a running profile**: assume it needs a supervised restart to actually go live; verify by checking the running process's start time is *after* the file edit.
+
+---
+
+## 2026-08-14 — `SOUL.md` trimmed, validated against a live test battery
+
+After the two fixes above resolved the acute crisis, reassessed whether `SOUL.md`'s size (176 lines / 33.6KB / ~8,400 tokens at the time) was *also* contributing. Read the full file and found every one of the 34 "Pitfalls" bullets was a near-verbatim restatement of something already stated in a numbered rule, just phrased negatively — genuine duplication, not reinforcement. Consolidated to 13 pitfalls (every distinct warning kept, pure duplicates merged), dropped content describing the now-impossible `tool_search` scenario, and cut one redundant worked example. Net: ~12% smaller.
+
+**Validated, not assumed**: a 5-test battery via the CLI harness, checked against real database state — greeting/persona, full-info task creation (deadline/priority verified correct in the DB), ambiguous multi-owner (correctly asked instead of guessing), `chase_now` with no tasks (correctly reported nothing, no fabricated send), digest, and delete-without-confirmation (correctly asked first, task verified still present afterward). No regression found from the trim. Not a strict scientific comparison, though — the pre-trim version wasn't failing on these same prompts either, since the crisis traced to the two structural causes above, not `SOUL.md` content; the trim's value is efficiency, not the reliability fix itself.
+
+---
+
+## 2026-08-14 — Assistant persona: manager-chosen name (Toby/Abby), live and confirmed
+
+User wanted `task-manager-bot` to have a chosen name and to always address the manager as "boss," with the choice made interactively through the bot itself (not hardcoded once by request) and persisted so it survives conversation resets. Since this profile's own Hermes memory feature is deliberately disabled (see 2026-08-12 gotchas), the choice needed real, separate persistence.
+
+**Built**: `BotState` (the existing single-row settings table, previously only holding the Telegram polling cursor) gained an `assistant_name` column — reused rather than adding a new table, matching the existing "one persistent settings row" pattern. Two new tools, `get_assistant_name()`/`set_assistant_name(name)` — the latter validates strictly against "Toby"/"Abby" and also updates the bot's **real Telegram display name** via a new `set_bot_display_name()` wrapper around Telegram's `setMyName` Bot API method, best-effort (the persona choice still saves even if the cosmetic Telegram-side update fails). New rule 0 in `SOUL.md`: check on first contact, ask if unset, never re-ask once chosen, handle "change your name" as an explicit re-trigger later.
+
+**A genuinely separate token needed discovering**: `task-manager-bot` has its own Telegram bot (`@taskmanager_...bot`), entirely different from `pm-chaser-mcp`'s existing `TELEGRAM_BOT_TOKEN` (the employee-facing chase bot, `@pmchaser_...bot`). To let `set_assistant_name` rename the *manager's* bot specifically, that second token was added to `pm-chaser-mcp`'s own `server/.env` as `TASK_MANAGER_BOT_TOKEN`.
+
+**First two real attempts both failed silently**, turning out to be early instances of the reliability crisis documented above (`set_assistant_name` never actually got called despite a confident claim). **After both crisis fixes, confirmed genuinely working**: `get_assistant_name()`'s database state and Telegram's own `getMyName` API both independently verified a real rename.
+
+---
+
+## 2026-08-14 — Documentation and infrastructure tracking
+
+Recognized a real gap: the two places a human would go to understand this project — this file and `README.md` — were stale (last meaningfully updated 2026-08-07, a week before all of the above), while the two places that *were* current — `~/.hermes/profiles/*/SOUL.md` and `config.yaml` — weren't version-controlled anywhere at all. `~/.hermes` is not a git repository; a disk failure or accidental edit there would have lost the actual, current behavioral documentation of both bots with no recovery path.
+
+**Fixed**: this file rewritten to match current reality (architecture section above) with all prior historical entries kept intact rather than deleted, since they're an accurate record of the reasoning trail even where later superseded. `~/.hermes/profiles/task-manager-bot/SOUL.md` and `config.yaml`, and `~/.hermes/profiles/pmchaser-bot/skills/pm-chaser/{task-chaser,task-digest}/SKILL.md` moved into this repo under `hermes-config/` and symlinked back to their original paths — Hermes reads the same effective files, but they're now tracked, diffable, and recoverable. Deliberately **not** tracked: `.env` files (real secrets), `logs/`/`sessions/`/`skills/.hub` (runtime state, not source), and the bundled marketplace skills (`xlsx`/`ocr-and-documents`/`docx`/`document-to-action-items`) — those are copies of external packages, not this project's own content.
