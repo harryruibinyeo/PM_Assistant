@@ -39,6 +39,8 @@ mcp.add_tool(tools.list_people)
 mcp.add_tool(tools.telegram_send_message)
 mcp.add_tool(tools.telegram_get_updates)
 mcp.add_tool(tools.resolve_unmatched)
+mcp.add_tool(tools.get_assistant_name)
+mcp.add_tool(tools.set_assistant_name)
 
 
 if __name__ == "__main__":

@@ -176,3 +176,17 @@ def send_message(chat_id: str, text: str) -> dict:
 
 def get_updates(offset: int | None = None, timeout: int = 0) -> list[dict]:
     return _default().get_updates(offset=offset, timeout=timeout)
+
+
+def set_bot_display_name(token: str, name: str) -> dict:
+    """Set a bot's own display name (shown in Telegram's app/contact list)
+    via the `setMyName` Bot API method. Takes an explicit token rather than
+    going through the module singleton, since this is used to rename
+    task-manager-bot's own bot — a different bot/token than the
+    TELEGRAM_BOT_TOKEN this module defaults to (the employee-facing chase
+    bot).
+    """
+    url = f"{TELEGRAM_API_BASE}/bot{token}/setMyName"
+    resp = httpx2.post(url, json={"name": name}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()

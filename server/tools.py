@@ -30,6 +30,7 @@ Two conventions worth knowing when reading this file:
 from __future__ import annotations
 
 import json
+import os
 import random
 import string
 from datetime import datetime, timedelta, timezone
@@ -172,6 +173,7 @@ def _task_dict(session, task: Task, now: datetime | None = None) -> dict:
         "description": task.description,
         "owner_name": task.owner.name if task.owner else None,
         "owner_is_linked": bool(task.owner and task.owner.telegram_chat_id),
+        "manager_name": task.manager.name if task.manager else None,
         "deadline_utc": _iso_utc(task.deadline),
         "deadline_local": _iso_local(task.deadline),
         # Negative means overdue. Pre-computed so the agent never does date math.
@@ -199,6 +201,7 @@ def create_task(
     priority: str,
     deadline: str | None = None,
     description: str | None = None,
+    manager_name: str | None = None,
 ) -> dict:
     """Create a new task assigned to a person who has already been registered.
 
@@ -213,6 +216,10 @@ def create_task(
         deadline: ISO 8601 datetime. If it has no timezone offset it is read as
             LOCAL time, e.g. "2026-08-10T17:00:00" means 5pm local.
         description: Optional longer description.
+        manager_name: Which manager this task answers to. Only needed once
+            more than one registered person has role="manager" — with a
+            single manager in the system (today's setup) it is resolved
+            automatically and this can be omitted.
     """
     priority_error = _validate_priority(priority)
     if priority_error:
@@ -226,10 +233,21 @@ def create_task(
                 "Register them with register_person first."
             }
 
+        if manager_name:
+            manager = _find_person_by_name(session, manager_name)
+            if manager is None:
+                return {"error": f"No registered person named '{manager_name}'."}
+        else:
+            candidate_managers = session.execute(
+                select(Person).where(Person.role == "manager")
+            ).scalars().all()
+            manager = candidate_managers[0] if len(candidate_managers) == 1 else None
+
         task = Task(
             title=title,
             description=description,
             owner_id=owner.id,
+            manager_id=manager.id if manager else None,
             deadline=_parse_dt(deadline),
             priority=priority,
         )
@@ -897,6 +915,7 @@ def get_chase_plan(
                     "task_id": task.id,
                     "title": task.title,
                     "owner_name": info["owner_name"],
+                    "manager_name": info["manager_name"],
                     "unanswered_checkin_count": info["unanswered_checkin_count"],
                     "hours_overdue": round(-hours_left, 2) if is_overdue else 0,
                     "deadline_local": info["deadline_local"],
@@ -946,16 +965,21 @@ def get_chase_plan(
             claimed.add(owner)
             to_chase.append(cand)
 
-        # Grouped by owner, not left as a flat per-task list — mirrors how
-        # `to_chase` is already deduplicated to one entry per person. Without
-        # this, a model composing the escalation message has to notice on its
-        # own that several tasks belong to the same person and combine them;
-        # tested for real and found wanting (a faster, smaller model sent
-        # three separate messages instead of one). Grouping here makes the
-        # mistake structurally impossible rather than just discouraged.
-        _escalations_by_owner: dict[str, list[dict]] = {}
+        # Grouped by (owner, manager) — not left as a flat per-task list —
+        # mirrors how `to_chase` is already deduplicated to one entry per
+        # person. Without this, a model composing the escalation message has
+        # to notice on its own that several tasks belong to the same person
+        # and combine them; tested for real and found wanting (a faster,
+        # smaller model sent three separate messages instead of one).
+        # Grouping here makes the mistake structurally impossible rather than
+        # just discouraged. Keying on manager too (not just owner) means an
+        # owner with escalating tasks under two different managers correctly
+        # produces two entries — one per manager to notify — instead of
+        # silently merging into a single entry with only one manager visible.
+        _escalations_by_owner: dict[tuple[str, str | None], list[dict]] = {}
         for entry in to_escalate:
-            _escalations_by_owner.setdefault(entry["owner_name"], []).append({
+            key = (entry["owner_name"], entry["manager_name"])
+            _escalations_by_owner.setdefault(key, []).append({
                 "task_id": entry["task_id"],
                 "title": entry["title"],
                 "unanswered_checkin_count": entry["unanswered_checkin_count"],
@@ -963,8 +987,8 @@ def get_chase_plan(
                 "deadline_local": entry["deadline_local"],
             })
         to_escalate = [
-            {"owner_name": owner, "tasks": owner_tasks}
-            for owner, owner_tasks in _escalations_by_owner.items()
+            {"owner_name": owner, "manager_name": manager_name, "tasks": owner_tasks}
+            for (owner, manager_name), owner_tasks in _escalations_by_owner.items()
         ]
 
         plan = {
@@ -1023,6 +1047,12 @@ def chase_now(owner_name: str) -> dict:
     of them, the same way an escalation entry covers every task for one
     person in a single message.
 
+    Like get_chase_plan, this polls Telegram first, so it may return
+    replies_to_interpret / unmatched_to_resolve / newly_linked from anyone,
+    not just this owner. Handle those the same way get_chase_plan's caller
+    does (interpret and call update_task, or resolve_unmatched) before
+    sending the new chase message — they are not picked up again later.
+
     Args:
         owner_name: The person to chase. Must already be registered — never
             guess or infer this from earlier conversation context; ask if
@@ -1071,6 +1101,7 @@ def chase_now(owner_name: str) -> dict:
             matched.append({
                 "task_id": task.id,
                 "title": task.title,
+                "manager_name": info["manager_name"],
                 "deadline_local": info["deadline_local"],
                 "hours_overdue": round(-hours_left, 2) if is_overdue else 0,
                 "hours_until_deadline": hours_left,
@@ -1088,6 +1119,13 @@ def chase_now(owner_name: str) -> dict:
             "reachable": True,
             "tasks": matched,
             "skipped": skipped,
+            # This call's own telegram_get_updates() above may have picked up
+            # replies or unmatched messages (from anyone, not just this
+            # owner) — surface them rather than silently discarding them, or
+            # they are never seen or interpreted by anyone.
+            "replies_to_interpret": updates.get("replies", []),
+            "unmatched_to_resolve": updates.get("unmatched", []),
+            "newly_linked": updates.get("linked", []),
         }
         if telegram_error:
             result["telegram_error"] = telegram_error
@@ -1155,6 +1193,7 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
                     "task_id": info["task_id"],
                     "title": info["title"],
                     "owner_name": info["owner_name"],
+                    "manager_name": info["manager_name"],
                     "deadline_local": info["deadline_local"],
                     "hours_until_deadline": info["hours_until_deadline"],
                     "deadline_already_passed": (
@@ -1174,6 +1213,7 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
             if info["unanswered_checkin_count"] >= 2:
                 unresponsive.append({
                     "owner_name": info["owner_name"],
+                    "manager_name": info["manager_name"],
                     "task_id": info["task_id"],
                     "title": info["title"],
                     "unanswered_checkin_count": info["unanswered_checkin_count"],
@@ -1244,3 +1284,68 @@ def delete_person(name: str) -> dict:
         person_name = person.name
         session.delete(person)
         return {"deleted": True, "person_id": person_id, "name": person_name}
+
+
+# ---------------------------------------------------------------------------
+# 14. get_assistant_name / set_assistant_name
+# ---------------------------------------------------------------------------
+_ASSISTANT_NAMES = {"toby": "Toby", "abby": "Abby"}
+
+
+def _get_bot_state(session) -> BotState:
+    state = session.get(BotState, 1)
+    if state is None:
+        state = BotState(id=1, last_update_id=None)
+        session.add(state)
+        session.flush()
+    return state
+
+
+def get_assistant_name() -> dict:
+    """Check whether the manager has already chosen this bot's persona name.
+
+    Call this at the start of a new conversation to decide whether to
+    introduce yourself and ask, or just proceed using the name already on
+    file. The choice persists across restarts — no need to ask again once
+    `chosen` is true, unless the manager explicitly asks to change it.
+    """
+    with session_scope() as session:
+        state = _get_bot_state(session)
+        return {"name": state.assistant_name, "chosen": state.assistant_name is not None}
+
+
+def set_assistant_name(name: str) -> dict:
+    """Set the bot's persona name, chosen by the manager.
+
+    Args:
+        name: "Toby" (male) or "Abby" (female) — case-insensitive, no other
+            values accepted. Ask the manager to pick one of these two rather
+            than inventing or accepting a different name.
+
+    Also updates the bot's actual Telegram display name (what shows up in
+    the Telegram app itself) via the Bot API, best-effort — if that part
+    fails (e.g. no token configured), the persona choice is still saved and
+    the response says so, rather than losing the whole change over the
+    cosmetic half.
+    """
+    normalized = _ASSISTANT_NAMES.get((name or "").strip().lower())
+    if normalized is None:
+        return {"error": "Name must be 'Toby' or 'Abby' — ask the manager to pick one of those two."}
+
+    with session_scope() as session:
+        state = _get_bot_state(session)
+        state.assistant_name = normalized
+
+    result = {"name": normalized, "saved": True}
+    token = os.environ.get("TASK_MANAGER_BOT_TOKEN")
+    if not token:
+        result["telegram_display_name_updated"] = False
+        result["telegram_note"] = "TASK_MANAGER_BOT_TOKEN not configured — persona name saved, but the Telegram app display name was not changed."
+        return result
+    try:
+        telegram_client.set_bot_display_name(token, normalized)
+        result["telegram_display_name_updated"] = True
+    except Exception as exc:
+        result["telegram_display_name_updated"] = False
+        result["telegram_note"] = f"Persona name saved, but updating the Telegram display name failed: {exc}"
+    return result

@@ -58,7 +58,10 @@ class Person(Base):
     link_code = Column(String, nullable=True, unique=True)
     created_at = Column(DateTime, default=utcnow)
 
-    tasks = relationship("Task", back_populates="owner")
+    # Explicit foreign_keys required as of Task.manager_id: with two FK
+    # columns from tasks to people, SQLAlchemy can no longer infer which one
+    # this side of the owner<->tasks relationship should join on.
+    tasks = relationship("Task", back_populates="owner", foreign_keys="Task.owner_id")
 
 
 class Task(Base):
@@ -68,6 +71,13 @@ class Task(Base):
     title = Column(String, nullable=False)
     description = Column(String, nullable=True)
     owner_id = Column(Integer, ForeignKey("people.id"), nullable=False)
+    # Which manager this task answers to. Deliberately lives here, not on
+    # Person — a person can be the manager for one task and just a
+    # contributor on another (and an owner can have tasks under different
+    # managers), so the relationship only makes sense per-task. Nullable so
+    # a task can exist without one (shouldn't happen in practice — create_task
+    # always resolves one — but nothing downstream should assume it's set).
+    manager_id = Column(Integer, ForeignKey("people.id"), nullable=True)
     deadline = Column(DateTime, nullable=True)
     priority = Column(String, nullable=False, default="medium")  # "low" | "medium" | "high"
     # Required at the tool layer (create_task has no default) — it drives
@@ -79,7 +89,8 @@ class Task(Base):
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
-    owner = relationship("Person", back_populates="tasks")
+    owner = relationship("Person", back_populates="tasks", foreign_keys=[owner_id])
+    manager = relationship("Person", foreign_keys=[manager_id])
     check_ins = relationship("CheckIn", back_populates="task", order_by="CheckIn.id")
 
 
@@ -135,12 +146,18 @@ class UnmatchedMessage(Base):
 
 
 class BotState(Base):
-    """Single-row table holding Telegram's getUpdates cursor (last_update_id)."""
+    """Single-row table holding Telegram's getUpdates cursor (last_update_id),
+    plus small persistent bot-wide settings that don't belong to any one
+    Person or Task — currently just the manager-bot's chosen persona name.
+    """
 
     __tablename__ = "bot_state"
 
     id = Column(Integer, primary_key=True)
     last_update_id = Column(Integer, nullable=True)
+    # task-manager-bot's chosen persona name — "Toby" or "Abby", or None if
+    # the manager hasn't picked one yet.
+    assistant_name = Column(String, nullable=True)
 
 
 def _default_db_path() -> str:
