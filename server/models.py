@@ -146,17 +146,15 @@ class UnmatchedMessage(Base):
 
 
 class BotState(Base):
-    """Single-row table holding Telegram's getUpdates cursor (last_update_id),
-    plus small persistent bot-wide settings that don't belong to any one
-    Person or Task — currently just the manager-bot's chosen persona name.
+    """Single-row table holding Telegram's getUpdates cursor (last_update_id).
     """
 
     __tablename__ = "bot_state"
 
     id = Column(Integer, primary_key=True)
     last_update_id = Column(Integer, nullable=True)
-    # task-manager-bot's chosen persona name — "Toby" or "Abby", or None if
-    # the manager hasn't picked one yet.
+    # Unused since the manager-bot's persona was fixed to "S.A.M." — left in
+    # place rather than migrated out since nothing reads it anymore.
     assistant_name = Column(String, nullable=True)
 
 

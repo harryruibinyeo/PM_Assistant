@@ -706,6 +706,36 @@ def _store_unmatched(session, person, chat_id, text, reason, candidates=None) ->
     }
 
 
+async def peek_for_new_replies(timeout: int = 25) -> bool:
+    """Read-only long-poll: True if a new Telegram message has arrived for
+    the employee bot, without consuming it.
+
+    Deliberately NOT an MCP tool — this is infrastructure signaling for
+    chase_listener.py (a plain host-side process, not an LLM) to wait on via
+    the /internal/peek route in main.py, so it knows the instant a reply
+    worth processing has arrived instead of only finding out on the next
+    15-minute cron tick. Registering this as a tool would put its schema in
+    every profile's prompt for something the model should never call itself.
+
+    Never advances BotState.last_update_id — only telegram_get_updates()
+    does that, when a real chase run consumes and processes the result. Two
+    callers can safely peek at the same offset; only the one that actually
+    processes gets to move it forward.
+
+    Async, and must stay that way: this runs on the same event loop as
+    every other request the server handles, called back-to-back forever by
+    chase_listener.py. A blocking 25s long-poll here starves every other
+    concurrent request (real MCP tool calls included) for the duration —
+    a real incident, traced live to `list_tasks` taking 50s+ despite
+    finishing in milliseconds once actually dispatched.
+    """
+    with session_scope() as session:
+        state = session.get(BotState, 1)
+        offset = state.last_update_id + 1 if state and state.last_update_id is not None else None
+    updates = await telegram_client.get_updates_async(offset=offset, timeout=timeout)
+    return bool(updates)
+
+
 def telegram_get_updates() -> dict:
     """Check Telegram for new messages since the last check.
 
@@ -1407,65 +1437,55 @@ def delete_person(name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 14. get_assistant_name / set_assistant_name
+# 14. notify_manager
 # ---------------------------------------------------------------------------
-_ASSISTANT_NAMES = {"toby": "Toby", "abby": "Abby"}
+def notify_manager(text: str) -> dict:
+    """Send the manager a short message from S.A.M.'s own bot, not the
+    employee-facing chase bot.
 
-
-def _get_bot_state(session) -> BotState:
-    state = session.get(BotState, 1)
-    if state is None:
-        state = BotState(id=1, last_update_id=None)
-        session.add(state)
-        session.flush()
-    return state
-
-
-def get_assistant_name() -> dict:
-    """Check whether the manager has already chosen this bot's persona name.
-
-    Call this at the start of a new conversation to decide whether to
-    introduce yourself and ask, or just proceed using the name already on
-    file. The choice persists across restarts — no need to ask again once
-    `chosen` is true, unless the manager explicitly asks to change it.
-    """
-    with session_scope() as session:
-        state = _get_bot_state(session)
-        return {"name": state.assistant_name, "chosen": state.assistant_name is not None}
-
-
-def set_assistant_name(name: str) -> dict:
-    """Set the bot's persona name, chosen by the manager.
+    Use this after interpreting a reply that produced a real status/progress
+    change on a task — not for pure chatter that left the task untouched.
+    Also used for escalations (unanswered-checkin threshold) — both go out
+    as S.A.M., since the manager only ever talks to S.A.M. directly and never
+    to the employee-facing chase bot. This call always resolves the manager
+    itself; callers never pass a chat id or bot token.
 
     Args:
-        name: "Toby" (male) or "Abby" (female) — case-insensitive, no other
-            values accepted. Ask the manager to pick one of these two rather
-            than inventing or accepting a different name.
-
-    Also updates the bot's actual Telegram display name (what shows up in
-    the Telegram app itself) via the Bot API, best-effort — if that part
-    fails (e.g. no token configured), the persona choice is still saved and
-    the response says so, rather than losing the whole change over the
-    cosmetic half.
+        text: The message body. Say who replied, on which task, and what
+            changed — not a raw status dump.
     """
-    normalized = _ASSISTANT_NAMES.get((name or "").strip().lower())
-    if normalized is None:
-        return {"error": "Name must be 'Toby' or 'Abby' — ask the manager to pick one of those two."}
-
-    with session_scope() as session:
-        state = _get_bot_state(session)
-        state.assistant_name = normalized
-
-    result = {"name": normalized, "saved": True}
     token = os.environ.get("TASK_MANAGER_BOT_TOKEN")
     if not token:
-        result["telegram_display_name_updated"] = False
-        result["telegram_note"] = "TASK_MANAGER_BOT_TOKEN not configured — persona name saved, but the Telegram app display name was not changed."
-        return result
+        return {
+            "error": "TASK_MANAGER_BOT_TOKEN not configured — cannot send as S.A.M.",
+            "sent": False,
+        }
+
+    with session_scope() as session:
+        candidate_managers = session.execute(
+            select(Person).where(Person.role == "manager")
+        ).scalars().all()
+        if len(candidate_managers) != 1:
+            return {
+                "error": f"Expected exactly one registered manager, found {len(candidate_managers)}.",
+                "sent": False,
+            }
+        manager = candidate_managers[0]
+        if not manager.telegram_chat_id:
+            return {
+                "error": f"'{manager.name}' hasn't linked Telegram yet — cannot be messaged.",
+                "sent": False,
+                "needs_linking": True,
+            }
+        chat_id = manager.telegram_chat_id
+
     try:
-        telegram_client.set_bot_display_name(token, normalized)
-        result["telegram_display_name_updated"] = True
+        result = telegram_client.TelegramClient(token).send_message(chat_id, text)
     except Exception as exc:
-        result["telegram_display_name_updated"] = False
-        result["telegram_note"] = f"Persona name saved, but updating the Telegram display name failed: {exc}"
-    return result
+        return {"error": str(exc), "sent": False}
+
+    return {
+        "sent": True,
+        "to": manager.name,
+        "telegram_message_id": (result.get("result") or {}).get("message_id"),
+    }

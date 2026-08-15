@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pm-chaser.chase-listener</string>
+
+    <!-- Runs via a symlink at ~/.hermes/pm-chaser-listener/, not the Desktop
+         path directly — launchd-spawned processes don't get the implicit
+         Full Disk Access an interactive Terminal session has, and macOS TCC
+         blocks bare reads under ~/Desktop without it ([Errno 1] Operation
+         not permitted, hit for real installing this). The symlink's target
+         is still the git-tracked file under pm-chaser/listener/ — this is
+         only a launchd-visibility workaround, not a second copy to keep in
+         sync. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/threeporkchops/.hermes/pm-chaser-listener/chase_listener.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/threeporkchops/.hermes/pm-chaser-listener</string>
+
+    <!-- Needs the `hermes` binary on PATH (chase_listener.py shells out to
+         it) — same PATH shape as ai.hermes.gateway.plist. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/threeporkchops/.local/bin:/Users/threeporkchops/.hermes/hermes-agent/venv/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+        <string>Background</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Same reasoning as the Hermes gateway plist: bound launchd's respawn
+         rate so a crash loop (e.g. pm-chaser-mcp down) can't hammer launchd,
+         and this script's own internal backoff (up to 60s between retries,
+         see chase_listener.py) already handles transient failures without
+         needing launchd to restart the whole process for those. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/threeporkchops/.hermes/pm-chaser-listener/chase_listener.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/threeporkchops/.hermes/pm-chaser-listener/chase_listener.error.log</string>
+</dict>
+</plist>

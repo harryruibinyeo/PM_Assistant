@@ -125,6 +125,28 @@ class TelegramClient:
         resp.raise_for_status()
         return resp.json().get("result", [])
 
+    async def get_updates_async(self, offset: int | None = None, timeout: int = 0) -> list[dict]:
+        """Same as `get_updates`, but a real `await` instead of a blocking
+        call. Only used by the `/internal/peek` route: that route runs on
+        the same event loop as every other request this server serves
+        (MCP tool calls included), so a long-poll (`timeout` up to 25s,
+        called back-to-back forever by chase_listener.py) done via the
+        blocking `httpx2.get` starved every other concurrent request for
+        the full 25s, every cycle — a real incident, traced by noticing
+        every slow tool call lined up immediately after a peek's own log
+        lines. `httpx2.AsyncClient` actually yields control while waiting
+        on the network, so the event loop stays free to service everything
+        else in the meantime.
+        """
+        url = f"{TELEGRAM_API_BASE}/bot{self._token}/getUpdates"
+        params: dict[str, int] = {"timeout": timeout}
+        if offset is not None:
+            params["offset"] = offset
+        async with httpx2.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=timeout + 10)
+        resp.raise_for_status()
+        return resp.json().get("result", [])
+
 
 def _token() -> str:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -178,15 +200,5 @@ def get_updates(offset: int | None = None, timeout: int = 0) -> list[dict]:
     return _default().get_updates(offset=offset, timeout=timeout)
 
 
-def set_bot_display_name(token: str, name: str) -> dict:
-    """Set a bot's own display name (shown in Telegram's app/contact list)
-    via the `setMyName` Bot API method. Takes an explicit token rather than
-    going through the module singleton, since this is used to rename
-    task-manager-bot's own bot — a different bot/token than the
-    TELEGRAM_BOT_TOKEN this module defaults to (the employee-facing chase
-    bot).
-    """
-    url = f"{TELEGRAM_API_BASE}/bot{token}/setMyName"
-    resp = httpx2.post(url, json={"name": name}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+async def get_updates_async(offset: int | None = None, timeout: int = 0) -> list[dict]:
+    return await _default().get_updates_async(offset=offset, timeout=timeout)

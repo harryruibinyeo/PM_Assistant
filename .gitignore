@@ -6,6 +6,7 @@ venv/
 
 # agent/run.py runtime output — will contain real message content over time
 agent/logs/
+listener/*.log
 
 # Local data — SQLite DB, Telegram token, any real secrets
 server/*.db

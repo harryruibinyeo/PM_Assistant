@@ -67,6 +67,7 @@ onboarding:
   seen:
     profile_build_offered: true
     busy_input_prompt: true
+    tool_progress_prompt: true
 # This is a narrow, single-purpose task-management bot, not a general
 # assistant — Hermes's generic self-improvement/memory features (periodic
 # "save a memory" / "create a skill" nudges that interrupt the chat with

@@ -10,6 +10,8 @@ import os
 
 from dotenv import load_dotenv
 from mcp.server import MCPServer
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 import tools
 from models import init_db
@@ -40,8 +42,24 @@ mcp.add_tool(tools.list_people)
 mcp.add_tool(tools.telegram_send_message)
 mcp.add_tool(tools.telegram_get_updates)
 mcp.add_tool(tools.resolve_unmatched)
-mcp.add_tool(tools.get_assistant_name)
-mcp.add_tool(tools.set_assistant_name)
+mcp.add_tool(tools.notify_manager)
+
+
+# Plain HTTP route, not an MCP tool — chase_listener.py (a host-side process,
+# not the LLM) long-polls this to know the instant an employee reply arrives,
+# then triggers an immediate chase run instead of waiting for the next
+# 15-minute cron tick. Registered via custom_route so it rides on the same
+# port/app as the MCP endpoint with no separate server to run, and it never
+# shows up in the MCP tool schema every profile's prompt pays for, since
+# custom_route is a distinct registration path from add_tool.
+@mcp.custom_route("/internal/peek", methods=["GET"])
+async def peek(request: Request) -> JSONResponse:
+    timeout = int(request.query_params.get("timeout", "25"))
+    try:
+        new = await tools.peek_for_new_replies(timeout=timeout)
+    except tools.TelegramNotConfigured as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    return JSONResponse({"new": new})
 
 
 if __name__ == "__main__":
