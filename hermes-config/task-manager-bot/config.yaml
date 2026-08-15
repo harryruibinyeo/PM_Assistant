@@ -38,6 +38,31 @@ terminal:
 # the model reaching for it.
 tools:
   tool_search: false
+# 38KB of the ~58KB total tool-schema budget was generic Hermes built-ins
+# this bot has no use for and had never called even once across weeks of
+# real use (computer_use, browser, session_search, delegation,
+# code_execution, tts, todo, file) — reprocessed on every single turn
+# regardless of what was asked, which is pure overhead on a
+# memory-bandwidth-bound local model. `memory` is included too since
+# memory.memory_enabled below already turns it off in behavior; this also
+# strips its schema bytes instead of just suppressing its nudges. Kept:
+# `skills`/`terminal` (used every meeting-minutes/bulk-upload run),
+# `clarify` (the ask-a-question mechanism rules 2/8/9 depend on), `web`
+# (no API key configured so it's currently a no-op, but the broad-PA-scope
+# decision explicitly wants research/quick-lookups in scope if one is ever
+# added), and `vision` (the photo-of-a-task-list path in rule 11 needs it —
+# see the image_input_mode note above, this model has real vision).
+agent:
+  disabled_toolsets:
+    - computer_use
+    - browser
+    - session_search
+    - delegation
+    - code_execution
+    - tts
+    - todo
+    - file
+    - memory
 onboarding:
   seen:
     profile_build_offered: true

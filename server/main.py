@@ -29,6 +29,7 @@ mcp.add_tool(tools.chase_now)
 mcp.add_tool(tools.get_digest_data)
 
 mcp.add_tool(tools.create_task)
+mcp.add_tool(tools.create_tasks_bulk)
 mcp.add_tool(tools.list_tasks)
 mcp.add_tool(tools.update_task)
 mcp.add_tool(tools.reassign_task)

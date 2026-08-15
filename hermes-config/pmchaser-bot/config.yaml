@@ -13,6 +13,36 @@ mcp_servers:
   pm-chaser:
     url: http://localhost:18173/mcp
     enabled: true
+# Same install-tree AGENTS.md leak documented on task-manager-bot's
+# config.yaml (Hermes issue #64590) — the global terminal.cwd fallback
+# resolves to ~/.hermes/hermes-agent and loads its 77KB contributor
+# AGENTS.md as if it were this bot's project context. Pointed at this
+# profile's own directory, which has none, so nothing loads.
+terminal:
+  cwd: /Users/threeporkchops/.hermes/profiles/pmchaser-bot
+# This bot only ever runs two fixed, unattended cron jobs (task-chaser,
+# task-digest) — no live conversation, no file uploads, no user present to
+# ask a clarifying question, no reason to browse the web or look at an
+# image. All of Hermes's generic built-in toolsets were nonetheless being
+# reprocessed on every 15-minute chase tick regardless — same bloat found
+# and fixed on task-manager-bot (see that config.yaml), applied here for
+# the same reason. `skills` is kept, since these two cron jobs' own skill
+# content is what actually drives their procedure.
+agent:
+  disabled_toolsets:
+    - computer_use
+    - browser
+    - session_search
+    - delegation
+    - code_execution
+    - tts
+    - todo
+    - file
+    - memory
+    - terminal
+    - vision
+    - web
+    - clarify
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,

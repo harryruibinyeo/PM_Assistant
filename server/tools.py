@@ -195,6 +195,95 @@ def _task_dict(session, task: Task, now: datetime | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # 1. create_task
 # ---------------------------------------------------------------------------
+# How recently an identical (title, owner, deadline) task must have been
+# created for a repeat create_task call to be treated as an accidental
+# re-submission rather than a deliberate new task. Exists because of a real
+# incident: asked to batch-create 4 tasks, the local model looped create_task
+# for the same row 4 times in a row before noticing — see create_tasks_bulk
+# below, which exists specifically so the model never has to loop this call
+# itself. This is the safety net for the cases that still reach create_task
+# directly (a single ad-hoc "add a task" request, a retry after a dropped
+# connection, etc.).
+_DUPLICATE_TASK_WINDOW_MINUTES = 10
+
+
+def _create_task_row(
+    session,
+    title: str,
+    owner_name: str,
+    priority: str,
+    deadline: str | None = None,
+    description: str | None = None,
+    manager_name: str | None = None,
+) -> dict:
+    """Shared row-creation logic for create_task and create_tasks_bulk.
+
+    Takes an already-open session so create_tasks_bulk can create many rows
+    in one transaction instead of one per tool call.
+    """
+    priority_error = _validate_priority(priority)
+    if priority_error:
+        return {"error": priority_error}
+
+    owner = _find_person_by_name(session, owner_name)
+    if owner is None:
+        return {
+            "error": f"No registered person named '{owner_name}'. "
+            "Register them with register_person first."
+        }
+
+    if manager_name:
+        manager = _find_person_by_name(session, manager_name)
+        if manager is None:
+            return {"error": f"No registered person named '{manager_name}'."}
+    else:
+        candidate_managers = session.execute(
+            select(Person).where(Person.role == "manager")
+        ).scalars().all()
+        manager = candidate_managers[0] if len(candidate_managers) == 1 else None
+
+    parsed_deadline = _parse_dt(deadline)
+
+    duplicate_cutoff = _now() - timedelta(minutes=_DUPLICATE_TASK_WINDOW_MINUTES)
+    existing = session.execute(
+        select(Task).where(
+            func.lower(Task.title) == title.strip().lower(),
+            Task.owner_id == owner.id,
+            Task.deadline == parsed_deadline,
+            Task.status.in_(OPEN_STATUSES),
+            Task.created_at >= duplicate_cutoff,
+        )
+    ).scalars().first()
+    if existing is not None:
+        result = _task_dict(session, existing)
+        result["duplicate_of_existing"] = True
+        result["warning"] = (
+            f"An open task titled '{existing.title}' for {owner.name} with the same "
+            f"deadline was already created {_DUPLICATE_TASK_WINDOW_MINUTES} minutes "
+            "ago or less — returning that existing task instead of creating another. "
+            "If this really is meant to be a separate task, vary the title or deadline."
+        )
+        return result
+
+    task = Task(
+        title=title,
+        description=description,
+        owner_id=owner.id,
+        manager_id=manager.id if manager else None,
+        deadline=parsed_deadline,
+        priority=priority,
+    )
+    session.add(task)
+    session.flush()
+    result = _task_dict(session, task)
+    if not owner.telegram_chat_id:
+        result["warning"] = (
+            f"'{owner.name}' has not linked Telegram yet and cannot be "
+            f"messaged. Their link code is {owner.link_code}."
+        )
+    return result
+
+
 def create_task(
     title: str,
     owner_name: str,
@@ -204,6 +293,11 @@ def create_task(
     manager_name: str | None = None,
 ) -> dict:
     """Create a new task assigned to a person who has already been registered.
+
+    For creating several tasks at once (a spreadsheet upload, meeting-minutes
+    action items), use create_tasks_bulk instead of calling this in a loop —
+    a loop of individual calls is exactly the pattern that has previously
+    caused the same row to get created more than once.
 
     Args:
         title: Short task title.
@@ -221,45 +315,71 @@ def create_task(
             single manager in the system (today's setup) it is resolved
             automatically and this can be omitted.
     """
-    priority_error = _validate_priority(priority)
-    if priority_error:
-        return {"error": priority_error}
-
     with session_scope() as session:
-        owner = _find_person_by_name(session, owner_name)
-        if owner is None:
-            return {
-                "error": f"No registered person named '{owner_name}'. "
-                "Register them with register_person first."
-            }
-
-        if manager_name:
-            manager = _find_person_by_name(session, manager_name)
-            if manager is None:
-                return {"error": f"No registered person named '{manager_name}'."}
-        else:
-            candidate_managers = session.execute(
-                select(Person).where(Person.role == "manager")
-            ).scalars().all()
-            manager = candidate_managers[0] if len(candidate_managers) == 1 else None
-
-        task = Task(
+        return _create_task_row(
+            session,
             title=title,
-            description=description,
-            owner_id=owner.id,
-            manager_id=manager.id if manager else None,
-            deadline=_parse_dt(deadline),
+            owner_name=owner_name,
             priority=priority,
+            deadline=deadline,
+            description=description,
+            manager_name=manager_name,
         )
-        session.add(task)
-        session.flush()
-        result = _task_dict(session, task)
-        if not owner.telegram_chat_id:
-            result["warning"] = (
-                f"'{owner.name}' has not linked Telegram yet and cannot be "
-                f"messaged. Their link code is {owner.link_code}."
+
+
+def create_tasks_bulk(tasks: list[dict]) -> dict:
+    """Create several tasks in one call — the batch path for a spreadsheet
+    upload, meeting-minutes action items, or any other multi-row source.
+
+    Use this instead of calling create_task once per row. Looping create_task
+    yourself means tracking "which rows have I already created" purely in
+    your own reasoning across several separate turns — that bookkeeping has
+    concretely failed before (the same row created 4 times in one batch,
+    noticed only partway through). This call does the iteration in code,
+    once, reliably, and tells you exactly what happened to every row.
+
+    Args:
+        tasks: One dict per task, each with the same fields as create_task's
+            arguments — title, owner_name, priority (required), and
+            optionally deadline, description, manager_name. Build this list
+            from the rows you already showed the manager in your preview and
+            got a yes on — do not add, drop, or re-order rows here.
+
+    Returns:
+        created: one entry per row that was created successfully (or, if it
+            exactly matched an already-created row from the last few
+            minutes, the existing task instead of a fresh duplicate —
+            see `duplicate_of_existing` on that entry).
+        failed: one entry per row that could not be created, each with the
+            original row (`input`) and an `error` explaining why (bad
+            priority, unregistered owner, etc.) — fix and retry only these,
+            never the whole batch.
+        summary: counts, for a one-line report back to the manager.
+    """
+    created: list[dict] = []
+    failed: list[dict] = []
+    with session_scope() as session:
+        for row in tasks:
+            result = _create_task_row(
+                session,
+                title=row.get("title", ""),
+                owner_name=row.get("owner_name", ""),
+                priority=row.get("priority", ""),
+                deadline=row.get("deadline"),
+                description=row.get("description"),
+                manager_name=row.get("manager_name"),
             )
-        return result
+            if "error" in result:
+                failed.append({"input": row, "error": result["error"]})
+            else:
+                created.append(result)
+
+    return {
+        "created": created,
+        "failed": failed,
+        "summary": f"{len(created)} created, {len(failed)} failed" if failed
+        else f"{len(created)} created",
+    }
 
 
 # ---------------------------------------------------------------------------
