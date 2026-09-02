@@ -20,6 +20,18 @@ mcp_servers:
 # profile's own directory, which has none, so nothing loads.
 terminal:
   cwd: /Users/threeporkchops/.hermes/profiles/pmchaser-bot
+# Same fix as task-manager-bot's config.yaml, never applied here until now:
+# this bot's whole toolset is small enough to never need the tool_search/
+# tool_describe/tool_call discovery bridge. Caught it misbehaving for real
+# on 2026-08-17 during a live test — instead of calling get_chase_plan
+# directly, it routed through tool_search -> tool_describe -> tool_call,
+# then called get_chase_plan a second time in the same run (only ever
+# supposed to be called once — see task-chaser/SKILL.md's own pitfall about
+# this). No visible harm that run, but it's the identical failure class
+# task-manager-bot was fixed for. Disabling it removes the wrong path
+# entirely instead of hoping the model doesn't wander into it.
+tools:
+  tool_search: false
 # This bot only ever runs two fixed, unattended cron jobs (task-chaser,
 # task-digest) — no live conversation, no file uploads, no user present to
 # ask a clarifying question, no reason to browse the web or look at an
