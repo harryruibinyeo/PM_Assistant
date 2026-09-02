@@ -13,7 +13,7 @@ Every message it writes, every reply it interprets, every judgment call it makes
 **Task tracking & chasing**
 - Create, update, reassign, or cancel tasks through plain conversation — no command syntax
 - Automatically pings task owners on a priority-driven cadence, reads their reply, and updates status — a message like *"waiting on the finance sheet"* becomes `status: blocked`, inferred, not pattern-matched
-- On-demand override ("chase Henry now") and live reply checks, independent of the automated schedule
+- On-demand override ("chase Daniel now") and live reply checks, independent of the automated schedule
 - Escalates to the manager after repeated silence, grouped into one message per person — never a spam of pings
 
 **Manager-only decisions, enforced structurally**

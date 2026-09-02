@@ -1176,7 +1176,7 @@ def get_chase_plan(
 # ---------------------------------------------------------------------------
 def chase_now(owner_name: str) -> dict:
     """Force an immediate chase of every open task for one named person right
-    now — a full manual override (e.g. the manager typing "chase Henry
+    now — a full manual override (e.g. the manager typing "chase Daniel
     now"), distinct from get_chase_plan's scheduled sweep.
 
     Unlike get_chase_plan, this bypasses BOTH the re-ping floor AND the

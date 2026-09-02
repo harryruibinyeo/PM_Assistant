@@ -28,7 +28,7 @@ The scheduled daily digest, or any request for a summary of where tasks stand. T
 5. Write it as short readable prose, not a table or a data dump. Quote the specific blockers people reported rather than saying "some tasks are blocked".
 6. If nothing needs attention, say so in one line. A short digest is a good digest.
 7. Send it with telegram_send_message(manager_name, digest) and NO task_id. This step is mandatory even on a quiet day ("all clear" still has to actually be sent) — writing the digest text is not the same as sending it.
-8. Only after telegram_send_message has actually been called and returned sent:true: this runs unattended, nobody reads a second report, so close with one short line only (e.g. "Digest sent to Jeffrey."). Never write that closing line, or the digest content itself, as your final answer without having called the tool first — a confident-sounding summary that was never sent is a failed run, not a successful one.
+8. Only after telegram_send_message has actually been called and returned sent:true: this runs unattended, nobody reads a second report, so close with one short line only (e.g. "Digest sent to Marcus."). Never write that closing line, or the digest content itself, as your final answer without having called the tool first — a confident-sounding summary that was never sent is a failed run, not a successful one.
 
 ## Pitfalls
 

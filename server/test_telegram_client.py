@@ -21,7 +21,7 @@ def check(label, condition):
 def main():
     check(
         "converts **bold** to MarkdownV2's single-asterisk bold",
-        _to_telegram_markdown_v2("**Larry** is overdue") == "*Larry* is overdue",
+        _to_telegram_markdown_v2("**Owen** is overdue") == "*Owen* is overdue",
     )
     check(
         "escapes a literal exclamation mark outside any bold span",
@@ -46,12 +46,12 @@ def main():
     )
     check(
         "handles multiple bold spans in one message",
-        _to_telegram_markdown_v2("**Larry**: Clean-up. **Henry**: Deck.")
-        == "*Larry*: Clean\\-up\\. *Henry*: Deck\\.",
+        _to_telegram_markdown_v2("**Owen**: Clean-up. **Daniel**: Deck.")
+        == "*Owen*: Clean\\-up\\. *Daniel*: Deck\\.",
     )
     check(
         "plain text with no special characters passes through unchanged",
-        _to_telegram_markdown_v2("Task assigned to Larry") == "Task assigned to Larry",
+        _to_telegram_markdown_v2("Task assigned to Owen") == "Task assigned to Owen",
     )
 
     print()

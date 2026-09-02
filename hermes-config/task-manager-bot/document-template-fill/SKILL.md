@@ -37,11 +37,11 @@ Two files uploaded together where one is a fillable template (a form, an order/i
 
 ## Worked example
 
-> Manager: *uploads Delivery_Order_Template.docx (blank fields: company/address, invoice-DO no., issue date, customer P.O., deliver-to, delivery address, a line-items table, date/time of delivery, remarks) together with a short note: "10 July 2025, Northpark residence, Jeffrey Yeo, 91828831, then A-001 apple 10, A-003 pear 12, A-005 orange 16, A-001 apple 10"*
+> Manager: *uploads Delivery_Order_Template.docx (blank fields: company/address, invoice-DO no., issue date, customer P.O., deliver-to, delivery address, a line-items table, date/time of delivery, remarks) together with a short note: "10 July 2025, Lakeside residence, Marcus Tan, 91234567, then A-001 apple 10, A-003 pear 12, A-005 orange 16, A-001 apple 10"*
 > You: *read the template's real fields; read the source text as free-form, not fixed columns*
 > You: "Here's what I can fill in, boss — flag anything before I generate it:
-> - Deliver To: Jeffrey Yeo (91828831)
-> - Delivery Address: Northpark residence
+> - Deliver To: Marcus Tan (91234567)
+> - Delivery Address: Lakeside residence
 > - Line items: A-001 apple ×10, A-003 pear ×12, A-005 orange ×16 — note A-001 apple ×10 appears twice in your message, I've only included it once, let me know if that second one was meant to be different
 > - Company name/address, Invoice/DO No., and Customer P.O.: nothing in your message covers these, leaving blank
 > - Only one date given (10 July 2025) but the template has both an Issue Date and a Date of Delivery — which one is it, or are they the same?
