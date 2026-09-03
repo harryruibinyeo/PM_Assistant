@@ -1,0 +1,20 @@
+Seeding 50 people / 200 tasks into a scratch DB...
+
+== Tool wall time + SQL query counts ==
+  list_tasks(filter=all)          72.05 ms    252 SQL statements
+  get_chase_plan()                82.02 ms    255 SQL statements
+  get_digest_data()               76.90 ms    282 SQL statements
+  chase_now(one person)            3.34 ms      9 SQL statements
+
+== Tool-schema size per profile (docstring + signature chars, proxy for prompt tokens) ==
+   Caveat: not the real qwen3.6 tokenizer - char count / 4 is a rough,
+   commonly-used approximation. Directionally correct, not exact.
+  pmchaser-bot (5 tools it actually uses)    ~  4393 chars  (~ 1098 tokens, approx.)
+  task-manager-bot (all 16, current)         ~ 13763 chars  (~ 3440 tokens, approx.)
+  pmchaser-bot (all 16, CURRENT - the bug)   ~ 13763 chars  (~ 3440 tokens, approx.)
+
+== Real LM Studio probe (http://192.168.1.8:1234/v1) ==
+  trial 1: small   610.6 ms, large(+~1.7K unique tok)   9542.3 ms, delta/1K  5254.0 ms
+  trial 2: small   323.2 ms, large(+~1.7K unique tok)   9594.1 ms, delta/1K  5453.5 ms
+  trial 3: small   246.6 ms, large(+~1.7K unique tok)   9577.9 ms, delta/1K  5489.0 ms
+  median cold-prefill cost: ~5454 ms per 1K uncached prompt tokens

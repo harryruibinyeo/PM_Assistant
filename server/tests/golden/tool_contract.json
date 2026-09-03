@@ -1,0 +1,307 @@
+{
+  "chase_now": {
+    "docstring": "Force an immediate chase of every open task for one named person right\nnow — a full manual override (e.g. the manager typing \"chase Daniel\nnow\"), distinct from get_chase_plan's scheduled sweep.\n\nUnlike get_chase_plan, this bypasses BOTH the re-ping floor AND the\noverdue/due-soon eligibility window — that window exists so the\n*automated* sweep doesn't nag someone about a task due next month, but an\nexplicit manual request already means the manager has decided now is the\nright time, deadline-window logic or not. A task with no deadline at all\nis included too, for the same reason. get_chase_plan (the scheduled\nsweep) is unaffected by any of this — it still respects the floor and\nthe window exactly as before.\n\nStill respects: a blocked task is excluded (it needs the manager, not\nanother ping — same reasoning as get_chase_plan), a closed (done/\ncancelled) task has nothing to chase, and an owner who hasn't linked\nTelegram can't be reached regardless of what's requested. Unlike\nget_chase_plan, this returns every open task for this one person rather\nthan just their single most urgent one — write ONE message covering all\nof them, the same way an escalation entry covers every task for one\nperson in a single message.\n\nLike get_chase_plan, this polls Telegram first, so it may return\nreplies_to_interpret / unmatched_to_resolve / newly_linked from anyone,\nnot just this owner. Handle those the same way get_chase_plan's caller\ndoes (interpret and call update_task, or resolve_unmatched) before\nsending the new chase message — they are not picked up again later.\n\nArgs:\n    owner_name: The person to chase. Must already be registered — never\n        guess or infer this from earlier conversation context; ask if\n        it wasn't given explicitly in the request.",
+    "params": [
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "owner_name"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "create_task": {
+    "docstring": "Create a new task assigned to a person who has already been registered.\n\nFor creating several tasks at once (a spreadsheet upload, meeting-minutes\naction items), use create_tasks_bulk instead of calling this in a loop —\na loop of individual calls is exactly the pattern that has previously\ncaused the same row to get created more than once.\n\nArgs:\n    title: Short task title.\n    owner_name: Name of the person who owns this task (must already be\n        registered via register_person). Case-insensitive.\n    priority: \"low\", \"medium\", or \"high\" — required, not optional. Drives\n        how often get_chase_plan will re-chase this task (high: every 1h,\n        medium: every 6h, low: every 24h), so it must be a deliberate\n        decision, not a default guessed on the caller's behalf.\n    deadline: ISO 8601 datetime. If it has no timezone offset it is read as\n        LOCAL time, e.g. \"2026-08-10T17:00:00\" means 5pm local.\n    description: Optional longer description.\n    manager_name: Which manager this task answers to. Only needed once\n        more than one registered person has role=\"manager\" — with a\n        single manager in the system (today's setup) it is resolved\n        automatically and this can be omitted.",
+    "params": [
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "title"
+      },
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "owner_name"
+      },
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "priority"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "deadline"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "description"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "manager_name"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "create_tasks_bulk": {
+    "docstring": "Create several tasks in one call — the batch path for a spreadsheet\nupload, meeting-minutes action items, or any other multi-row source.\n\nUse this instead of calling create_task once per row. Looping create_task\nyourself means tracking \"which rows have I already created\" purely in\nyour own reasoning across several separate turns — that bookkeeping has\nconcretely failed before (the same row created 4 times in one batch,\nnoticed only partway through). This call does the iteration in code,\nonce, reliably, and tells you exactly what happened to every row.\n\nArgs:\n    tasks: One dict per task, each with the same fields as create_task's\n        arguments — title, owner_name, priority (required), and\n        optionally deadline, description, manager_name. Build this list\n        from the rows you already showed the manager in your preview and\n        got a yes on — do not add, drop, or re-order rows here.\n\nReturns:\n    created: one entry per row that was created successfully (or, if it\n        exactly matched an already-created row from the last few\n        minutes, the existing task instead of a fresh duplicate —\n        see `duplicate_of_existing` on that entry).\n    failed: one entry per row that could not be created, each with the\n        original row (`input`) and an `error` explaining why (bad\n        priority, unregistered owner, etc.) — fix and retry only these,\n        never the whole batch.\n    summary: counts, for a one-line report back to the manager.",
+    "params": [
+      {
+        "annotation": "list[dict]",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tasks"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "delete_person": {
+    "docstring": "Permanently remove a person who was registered by mistake.\n\nRefuses if they own any task at all, open or closed — reassign those\ntasks with update_task(owner_name=...) or remove them with delete_task\nfirst. Keeps this limited to genuine \"wrong person, nothing built on\nthem yet\" cleanup, never a way to silently lose task/check-in history.\nCallers (e.g. the manager-bot skill) are expected to confirm with a\nhuman before calling this — it is not enforced here, since this layer\nhas no concept of \"the human already agreed,\" only of what's safe to\nallow if asked.",
+    "params": [
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "delete_task": {
+    "docstring": "Permanently delete a task and its check-in history.\n\nPrefer update_task(status=\"cancelled\") for work that was dropped — that\nkeeps the record. Use this only for tasks created by mistake.",
+    "params": [
+      {
+        "annotation": "int",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "task_id"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "get_chase_plan": {
+    "docstring": "Do a whole chase check's worth of gathering and filtering in one call.\n\nPolls Telegram, files anything that arrived, then works out who should be\nchased right now — applying the re-ping floor, the escalation threshold,\nthe unreachable check, and one-task-per-person — and returns the result\nalready sorted by urgency.\n\nEverything filtered out is returned in `skipped` with the reason, so a\njudgement call the rules got wrong can still be overridden deliberately.\n\nReturns:\n    replies_to_interpret: replies matched to a task, awaiting your reading.\n        Decide what each means and call update_task.\n    unmatched_to_resolve: messages that could not be matched. Work out\n        which task each means and call resolve_unmatched.\n    newly_linked: people who just connected their Telegram.\n    to_chase: chase these now — one per person, most urgent first. Write a\n        message for each and send it with telegram_send_message(task_id=...).\n    to_escalate: too many unanswered pings, grouped one entry per owner\n        (each carrying every overdue task of theirs) — send exactly one\n        message per entry, covering all of that person's tasks, never one\n        message per task.\n    unreachable: people who own work but never linked Telegram, with their\n        link codes. Not their fault and never an ignored ping.\n    skipped: filtered out this run, each with a reason.\n    manager_name: who to send escalations to.\n\nArgs:\n    due_soon_hours: How far ahead counts as \"due soon\".\n    max_unanswered: Escalate instead of chasing at this many unanswered pings.\n\nThe re-ping floor is no longer a flat window — it now depends on each\ntask's priority (high: 1h, medium: 6h, low: 24h), so an urgent task gets\nfollowed up on far sooner than a low-priority one. See chase_now for a\nmanual, floor-bypassing chase of one named person on demand.",
+    "params": [
+      {
+        "annotation": "int",
+        "default": "24",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "due_soon_hours"
+      },
+      {
+        "annotation": "int",
+        "default": "3",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "max_unanswered"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "get_digest_data": {
+    "docstring": "Gather everything the manager's digest needs, in one call.\n\nDeliberately does NOT decide what is \"at risk\" or what deserves the\nmanager's attention — that judgement is yours. It only guarantees the\ngathering happens and that the manager is looked up rather than guessed.\n\nReturns the manager to send to, every active task with its computed state,\nplus counts and the people worth calling out: those who have stopped\nreplying, and those who never linked Telegram and cannot be reached.\n\n`blocked_needing_decision` matters most. Blocked tasks are deliberately no\nlonger chased — the owner cannot fix them and has usually already\nexplained why — so the digest is the only place they surface. Each carries\nthe owner's own words and whether the deadline has already passed, because\nthe manager's likely next move is to unblock it or move the date.\n\nArgs:\n    at_risk_hours: Tasks due within this many hours are flagged\n        `due_within_window` for your consideration.",
+    "params": [
+      {
+        "annotation": "int",
+        "default": "24",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "at_risk_hours"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "list_people": {
+    "docstring": "List registered people, their role, whether they've linked Telegram,\nand how many open tasks they own.\n\nUse this to find who the manager is (role=\"manager\") before sending a\ndigest, and to spot people who never completed Telegram linking.\n\nArgs:\n    role: Optionally filter to \"manager\" or \"team_member\".",
+    "params": [
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "role"
+      }
+    ],
+    "return_annotation": "list[dict]"
+  },
+  "list_tasks": {
+    "docstring": "List tasks with their full chase state.\n\nEach task includes everything needed to decide whether to chase it:\nhours_until_deadline (negative = overdue), hours_since_last_checkin,\nunanswered_checkin_count, and owner_is_linked.\n\nArgs:\n    filter: \"all\", \"active\" (not done/cancelled), \"overdue\" (past deadline\n        and still active), or \"due_soon\" (deadline within due_soon_hours\n        and still active).\n    owner_name: If set, only tasks owned by this person (case-insensitive).\n    due_soon_hours: Window size used by the \"due_soon\" filter.",
+    "params": [
+      {
+        "annotation": "str",
+        "default": "'all'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filter"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "owner_name"
+      },
+      {
+        "annotation": "int",
+        "default": "24",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "due_soon_hours"
+      }
+    ],
+    "return_annotation": "list[dict]"
+  },
+  "notify_manager": {
+    "docstring": "Send the manager a short message from S.A.M.'s own bot, not the\nemployee-facing chase bot.\n\nUse this after interpreting a reply that produced a real status/progress\nchange on a task — not for pure chatter that left the task untouched.\nAlso used for escalations (unanswered-checkin threshold) — both go out\nas S.A.M., since the manager only ever talks to S.A.M. directly and never\nto the employee-facing chase bot. This call always resolves the manager\nitself; callers never pass a chat id or bot token.\n\nArgs:\n    text: The message body. Say who replied, on which task, and what\n        changed — not a raw status dump.",
+    "params": [
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "text"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "reassign_task": {
+    "docstring": "Move a task to a different registered person.\n\nA narrower, explicit alternative to update_task(owner_name=...): it only\never touches ownership, so a reassignment can't happen silently as a side\neffect of an unrelated field edit in the same call. Use this whenever the\nintent is specifically \"move this task to someone else.\"",
+    "params": [
+      {
+        "annotation": "int",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "task_id"
+      },
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "new_owner_name"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "register_person": {
+    "docstring": "Register a person (team member or manager) and get their linking code.\n\nThe person must send `/start <link_code>` to the bot from their own\nTelegram account to complete linking — only then can they be messaged.\n\nArgs:\n    name: The person's name.\n    telegram_username: Their @username, for reference only (not required\n        for linking to work).\n    role: \"team_member\" or \"manager\".",
+    "params": [
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "telegram_username"
+      },
+      {
+        "annotation": "str",
+        "default": "'team_member'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "role"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "resolve_unmatched": {
+    "docstring": "Resolve a message that couldn't be matched to a task automatically.\n\nArgs:\n    unmatched_id: From telegram_get_updates.\n    task_id: The task this message was actually about — its text is\n        recorded against that task. Leave empty to dismiss the message as\n        not being a status update at all (chit-chat, a question, noise).\n\nAfter attaching a message to a task, call update_task separately if the\nstatus or progress changed.",
+    "params": [
+      {
+        "annotation": "int",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unmatched_id"
+      },
+      {
+        "annotation": "int | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "task_id"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "telegram_get_updates": {
+    "docstring": "Check Telegram for new messages since the last check.\n\nReturns three lists:\n  * linked   — people who just completed Telegram linking.\n  * replies  — messages confidently matched to a specific task. Interpret\n               each one and call update_task accordingly.\n  * unmatched — messages that could not be matched confidently: a\n               spontaneous update with no ping outstanding, a reply to an\n               already-answered ping, or an ambiguous reply sent while\n               several pings were outstanding. Each has an unmatched_id;\n               work out which task it means (list_tasks helps) and call\n               resolve_unmatched. These persist across runs until resolved,\n               so nothing is lost — but they are never resolved\n               automatically, so do not ignore them.\n\nMessages from people who aren't registered are discarded.",
+    "params": [],
+    "return_annotation": "dict"
+  },
+  "telegram_send_message": {
+    "docstring": "Send a Telegram message to a registered, linked person.\n\nWhen chasing a specific task, ALWAYS pass task_id. Doing so records the\ncheck-in in the same call — which is what stops the same person being\npinged again on the next run, and what lets their reply be matched back to\nthis exact task.\n\nArgs:\n    owner_name: Name of the registered person to message (case-insensitive).\n    text: Message body.\n    task_id: The task being chased, if this is a chase message.",
+    "params": [
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "owner_name"
+      },
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "text"
+      },
+      {
+        "annotation": "int | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "task_id"
+      }
+    ],
+    "return_annotation": "dict"
+  },
+  "update_task": {
+    "docstring": "Update a task. Any argument left out is left unchanged.\n\nArgs:\n    task_id: The task to update.\n    status: \"not_started\", \"in_progress\", \"blocked\", \"done\", or \"cancelled\".\n        Setting \"done\" also forces progress_pct to 100.\n    progress_pct: 0-100.\n    deadline: New ISO 8601 deadline (naive = local time, as in create_task).\n    priority: \"low\", \"medium\", or \"high\" — changes this task's chase\n        re-ping floor (see create_task).\n    title: New title.\n    owner_name: Reassign to a different registered person.",
+    "params": [
+      {
+        "annotation": "int",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "task_id"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "status"
+      },
+      {
+        "annotation": "int | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "progress_pct"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "deadline"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "priority"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "title"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "owner_name"
+      }
+    ],
+    "return_annotation": "dict"
+  }
+}

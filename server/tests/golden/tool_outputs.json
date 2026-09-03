@@ -1,0 +1,599 @@
+{
+  "chase_now_alice": {
+    "newly_linked": [],
+    "owner_name": "Alice",
+    "reachable": true,
+    "replies_to_interpret": [],
+    "skipped": [],
+    "tasks": [
+      {
+        "deadline_local": "2026-08-13T09:00:00+08:00",
+        "hours_overdue": 27.0,
+        "hours_until_deadline": -27.0,
+        "manager_name": "Bob",
+        "previously_chased": true,
+        "priority": "high",
+        "progress_pct": 0,
+        "status": "not_started",
+        "task_id": 1,
+        "title": "Finish Q3 board deck",
+        "unanswered_checkin_count": 1
+      },
+      {
+        "deadline_local": "2026-08-20T09:00:00+08:00",
+        "hours_overdue": 0,
+        "hours_until_deadline": 141.0,
+        "manager_name": "Bob",
+        "previously_chased": false,
+        "priority": "medium",
+        "progress_pct": 0,
+        "status": "not_started",
+        "task_id": 4,
+        "title": "Book the venue",
+        "unanswered_checkin_count": 0
+      },
+      {
+        "deadline_local": "2026-09-15T09:00:00+08:00",
+        "hours_overdue": 0,
+        "hours_until_deadline": 765.0,
+        "manager_name": "Bob",
+        "previously_chased": true,
+        "priority": "low",
+        "progress_pct": 0,
+        "status": "not_started",
+        "task_id": 2,
+        "title": "Archive old invoices",
+        "unanswered_checkin_count": 1
+      }
+    ],
+    "unmatched_to_resolve": [
+      {
+        "candidate_task_ids": [
+          1,
+          2
+        ],
+        "person_name": "Alice",
+        "reason": "2 pings were outstanding — cannot tell which this answers",
+        "received_at_local": "2026-08-14T12:00:00+08:00",
+        "text": "waiting on the finance numbers from Priya",
+        "unmatched_id": 1
+      }
+    ]
+  },
+  "create_task_low_far_future": {
+    "deadline_local": "2026-09-15T09:00:00+08:00",
+    "deadline_utc": "2026-09-15T01:00:00Z",
+    "description": null,
+    "hours_since_last_checkin": null,
+    "hours_until_deadline": 765.0,
+    "last_checkin_answered": null,
+    "last_checkin_sent_at_local": null,
+    "last_reply_at_local": null,
+    "last_reply_text": null,
+    "manager_name": "Bob",
+    "owner_is_linked": true,
+    "owner_name": "Alice",
+    "priority": "low",
+    "progress_pct": 0,
+    "status": "not_started",
+    "task_id": 2,
+    "title": "Archive old invoices",
+    "total_checkins": 0,
+    "unanswered_checkin_count": 0,
+    "updated_at_local": "2026-08-14T12:00:00+08:00"
+  },
+  "create_task_overdue_high": {
+    "deadline_local": "2026-08-13T09:00:00+08:00",
+    "deadline_utc": "2026-08-13T01:00:00Z",
+    "description": "Board deck for the Q3 review",
+    "hours_since_last_checkin": null,
+    "hours_until_deadline": -27.0,
+    "last_checkin_answered": null,
+    "last_checkin_sent_at_local": null,
+    "last_reply_at_local": null,
+    "last_reply_text": null,
+    "manager_name": "Bob",
+    "owner_is_linked": true,
+    "owner_name": "Alice",
+    "priority": "high",
+    "progress_pct": 0,
+    "status": "not_started",
+    "task_id": 1,
+    "title": "Finish Q3 board deck",
+    "total_checkins": 0,
+    "unanswered_checkin_count": 0,
+    "updated_at_local": "2026-08-14T12:00:00+08:00"
+  },
+  "create_task_unreachable_owner": {
+    "deadline_local": "2026-08-13T09:00:00+08:00",
+    "deadline_utc": "2026-08-13T01:00:00Z",
+    "description": null,
+    "hours_since_last_checkin": null,
+    "hours_until_deadline": -27.0,
+    "last_checkin_answered": null,
+    "last_checkin_sent_at_local": null,
+    "last_reply_at_local": null,
+    "last_reply_text": null,
+    "manager_name": "Bob",
+    "owner_is_linked": false,
+    "owner_name": "Carol",
+    "priority": "medium",
+    "progress_pct": 0,
+    "status": "not_started",
+    "task_id": 3,
+    "title": "Carol's task",
+    "total_checkins": 0,
+    "unanswered_checkin_count": 0,
+    "updated_at_local": "2026-08-14T12:00:00+08:00",
+    "warning": "'Carol' has not linked Telegram yet and cannot be messaged. Their link code is JBE6IW."
+  },
+  "create_tasks_bulk": {
+    "created": [
+      {
+        "deadline_local": "2026-08-20T09:00:00+08:00",
+        "deadline_utc": "2026-08-20T01:00:00Z",
+        "description": null,
+        "hours_since_last_checkin": null,
+        "hours_until_deadline": 141.0,
+        "last_checkin_answered": null,
+        "last_checkin_sent_at_local": null,
+        "last_reply_at_local": null,
+        "last_reply_text": null,
+        "manager_name": "Bob",
+        "owner_is_linked": true,
+        "owner_name": "Alice",
+        "priority": "medium",
+        "progress_pct": 0,
+        "status": "not_started",
+        "task_id": 4,
+        "title": "Book the venue",
+        "total_checkins": 0,
+        "unanswered_checkin_count": 0,
+        "updated_at_local": "2026-08-14T12:00:00+08:00"
+      }
+    ],
+    "failed": [
+      {
+        "error": "No registered person named 'Nobody'. Register them with register_person first.",
+        "input": {
+          "owner_name": "Nobody",
+          "priority": "medium",
+          "title": "Bad row"
+        }
+      }
+    ],
+    "summary": "1 created, 1 failed"
+  },
+  "delete_person_carol_refused": {
+    "error": "'Carol' owns 1 task(s) — reassign them with update_task(owner_name=...) or remove them with delete_task before removing this person."
+  },
+  "delete_task_low_priority": {
+    "deleted": true,
+    "task_id": 2,
+    "title": "Archive old invoices"
+  },
+  "get_chase_plan": {
+    "checked_at_local": "2026-08-14T12:00:00+08:00",
+    "manager_name": "Bob",
+    "newly_linked": [],
+    "replies_to_interpret": [],
+    "skipped": [
+      {
+        "owner_name": "Alice",
+        "reason": "pinged 0.0h ago, under the 1h floor for high priority",
+        "task_id": 1,
+        "title": "Finish Q3 board deck"
+      },
+      {
+        "owner_name": "Carol",
+        "reason": "owner has not linked Telegram and cannot receive messages",
+        "task_id": 3,
+        "title": "Carol's task"
+      }
+    ],
+    "summary": "1 unmatched message(s); 1 unreachable owner(s)",
+    "to_chase": [],
+    "to_escalate": [],
+    "unmatched_to_resolve": [
+      {
+        "candidate_task_ids": [
+          1,
+          2
+        ],
+        "person_name": "Alice",
+        "reason": "2 pings were outstanding — cannot tell which this answers",
+        "received_at_local": "2026-08-14T12:00:00+08:00",
+        "text": "waiting on the finance numbers from Priya",
+        "unmatched_id": 1
+      }
+    ],
+    "unreachable": [
+      {
+        "link_code": "JBE6IW",
+        "link_url": null,
+        "name": "Carol",
+        "task_count": 1
+      }
+    ]
+  },
+  "get_digest_data": {
+    "active_count": 4,
+    "active_tasks": [
+      {
+        "deadline_local": "2026-08-13T09:00:00+08:00",
+        "deadline_utc": "2026-08-13T01:00:00Z",
+        "description": "Board deck for the Q3 review",
+        "due_within_window": false,
+        "hours_since_last_checkin": 0.0,
+        "hours_until_deadline": -27.0,
+        "is_overdue": true,
+        "last_checkin_answered": false,
+        "last_checkin_sent_at_local": "2026-08-14T12:00:00+08:00",
+        "last_reply_at_local": "2026-08-14T12:00:00+08:00",
+        "last_reply_text": "waiting on the finance numbers from Priya",
+        "manager_name": "Bob",
+        "owner_is_linked": true,
+        "owner_name": "Alice",
+        "priority": "high",
+        "progress_pct": 0,
+        "status": "blocked",
+        "task_id": 1,
+        "title": "Finish Q3 board deck",
+        "total_checkins": 1,
+        "unanswered_checkin_count": 1,
+        "updated_at_local": "2026-08-14T12:00:00+08:00"
+      },
+      {
+        "deadline_local": "2026-08-13T09:00:00+08:00",
+        "deadline_utc": "2026-08-13T01:00:00Z",
+        "description": null,
+        "due_within_window": false,
+        "hours_since_last_checkin": null,
+        "hours_until_deadline": -27.0,
+        "is_overdue": true,
+        "last_checkin_answered": null,
+        "last_checkin_sent_at_local": null,
+        "last_reply_at_local": null,
+        "last_reply_text": null,
+        "manager_name": "Bob",
+        "owner_is_linked": false,
+        "owner_name": "Carol",
+        "priority": "medium",
+        "progress_pct": 0,
+        "status": "not_started",
+        "task_id": 3,
+        "title": "Carol's task",
+        "total_checkins": 0,
+        "unanswered_checkin_count": 0,
+        "updated_at_local": "2026-08-14T12:00:00+08:00"
+      },
+      {
+        "deadline_local": "2026-08-20T09:00:00+08:00",
+        "deadline_utc": "2026-08-20T01:00:00Z",
+        "description": null,
+        "due_within_window": false,
+        "hours_since_last_checkin": null,
+        "hours_until_deadline": 141.0,
+        "is_overdue": false,
+        "last_checkin_answered": null,
+        "last_checkin_sent_at_local": null,
+        "last_reply_at_local": null,
+        "last_reply_text": null,
+        "manager_name": "Bob",
+        "owner_is_linked": true,
+        "owner_name": "Alice",
+        "priority": "medium",
+        "progress_pct": 0,
+        "status": "not_started",
+        "task_id": 4,
+        "title": "Book the venue",
+        "total_checkins": 0,
+        "unanswered_checkin_count": 0,
+        "updated_at_local": "2026-08-14T12:00:00+08:00"
+      },
+      {
+        "deadline_local": "2026-09-15T09:00:00+08:00",
+        "deadline_utc": "2026-09-15T01:00:00Z",
+        "description": null,
+        "due_within_window": false,
+        "hours_since_last_checkin": 0.0,
+        "hours_until_deadline": 765.0,
+        "is_overdue": false,
+        "last_checkin_answered": false,
+        "last_checkin_sent_at_local": "2026-08-14T12:00:00+08:00",
+        "last_reply_at_local": null,
+        "last_reply_text": null,
+        "manager_name": "Bob",
+        "owner_is_linked": true,
+        "owner_name": "Alice",
+        "priority": "low",
+        "progress_pct": 0,
+        "status": "not_started",
+        "task_id": 2,
+        "title": "Archive old invoices",
+        "total_checkins": 1,
+        "unanswered_checkin_count": 1,
+        "updated_at_local": "2026-08-14T12:00:00+08:00"
+      }
+    ],
+    "blocked_needing_decision": [
+      {
+        "deadline_already_passed": true,
+        "deadline_local": "2026-08-13T09:00:00+08:00",
+        "hours_until_deadline": -27.0,
+        "manager_name": "Bob",
+        "owner_name": "Alice",
+        "reason_given": "waiting on the finance numbers from Priya",
+        "said_at_local": "2026-08-14T12:00:00+08:00",
+        "task_id": 1,
+        "title": "Finish Q3 board deck"
+      }
+    ],
+    "generated_at_local": "2026-08-14T12:00:00+08:00",
+    "manager_name": "Bob",
+    "managers": [
+      {
+        "is_linked": true,
+        "link_code": null,
+        "link_url": null,
+        "name": "Bob",
+        "open_task_count": 0,
+        "person_id": 1,
+        "role": "manager",
+        "telegram_username": null
+      }
+    ],
+    "overdue_count": 2,
+    "pending_unmatched_count": 0,
+    "unreachable_people": [
+      {
+        "is_linked": false,
+        "link_code": "JBE6IW",
+        "link_url": null,
+        "name": "Carol",
+        "open_task_count": 1,
+        "person_id": 3,
+        "role": "team_member",
+        "telegram_username": null
+      }
+    ],
+    "unresponsive": []
+  },
+  "initial_updates": {
+    "linked": [
+      {
+        "name": "Bob",
+        "person_id": 1
+      },
+      {
+        "name": "Alice",
+        "person_id": 2
+      }
+    ],
+    "replies": [],
+    "unmatched": []
+  },
+  "list_people_all": [
+    {
+      "is_linked": true,
+      "link_code": null,
+      "link_url": null,
+      "name": "Alice",
+      "open_task_count": 2,
+      "person_id": 2,
+      "role": "team_member",
+      "telegram_username": "alice_tg"
+    },
+    {
+      "is_linked": true,
+      "link_code": null,
+      "link_url": null,
+      "name": "Bob",
+      "open_task_count": 0,
+      "person_id": 1,
+      "role": "manager",
+      "telegram_username": null
+    },
+    {
+      "is_linked": false,
+      "link_code": "JBE6IW",
+      "link_url": null,
+      "name": "Carol",
+      "open_task_count": 2,
+      "person_id": 3,
+      "role": "team_member",
+      "telegram_username": null
+    }
+  ],
+  "list_tasks_all": [
+    {
+      "deadline_local": "2026-08-13T09:00:00+08:00",
+      "deadline_utc": "2026-08-13T01:00:00Z",
+      "description": "Board deck for the Q3 review",
+      "hours_since_last_checkin": 0.0,
+      "hours_until_deadline": -27.0,
+      "last_checkin_answered": false,
+      "last_checkin_sent_at_local": "2026-08-14T12:00:00+08:00",
+      "last_reply_at_local": "2026-08-14T12:00:00+08:00",
+      "last_reply_text": "waiting on the finance numbers from Priya",
+      "manager_name": "Bob",
+      "owner_is_linked": true,
+      "owner_name": "Alice",
+      "priority": "high",
+      "progress_pct": 0,
+      "status": "blocked",
+      "task_id": 1,
+      "title": "Finish Q3 board deck",
+      "total_checkins": 1,
+      "unanswered_checkin_count": 1,
+      "updated_at_local": "2026-08-14T12:00:00+08:00"
+    },
+    {
+      "deadline_local": "2026-09-15T09:00:00+08:00",
+      "deadline_utc": "2026-09-15T01:00:00Z",
+      "description": null,
+      "hours_since_last_checkin": 0.0,
+      "hours_until_deadline": 765.0,
+      "last_checkin_answered": false,
+      "last_checkin_sent_at_local": "2026-08-14T12:00:00+08:00",
+      "last_reply_at_local": null,
+      "last_reply_text": null,
+      "manager_name": "Bob",
+      "owner_is_linked": false,
+      "owner_name": "Carol",
+      "priority": "low",
+      "progress_pct": 0,
+      "status": "not_started",
+      "task_id": 2,
+      "title": "Archive old invoices",
+      "total_checkins": 1,
+      "unanswered_checkin_count": 1,
+      "updated_at_local": "2026-08-14T12:00:00+08:00"
+    },
+    {
+      "deadline_local": "2026-08-13T09:00:00+08:00",
+      "deadline_utc": "2026-08-13T01:00:00Z",
+      "description": null,
+      "hours_since_last_checkin": null,
+      "hours_until_deadline": -27.0,
+      "last_checkin_answered": null,
+      "last_checkin_sent_at_local": null,
+      "last_reply_at_local": null,
+      "last_reply_text": null,
+      "manager_name": "Bob",
+      "owner_is_linked": false,
+      "owner_name": "Carol",
+      "priority": "medium",
+      "progress_pct": 0,
+      "status": "not_started",
+      "task_id": 3,
+      "title": "Carol's task",
+      "total_checkins": 0,
+      "unanswered_checkin_count": 0,
+      "updated_at_local": "2026-08-14T12:00:00+08:00"
+    },
+    {
+      "deadline_local": "2026-08-20T09:00:00+08:00",
+      "deadline_utc": "2026-08-20T01:00:00Z",
+      "description": null,
+      "hours_since_last_checkin": null,
+      "hours_until_deadline": 141.0,
+      "last_checkin_answered": null,
+      "last_checkin_sent_at_local": null,
+      "last_reply_at_local": null,
+      "last_reply_text": null,
+      "manager_name": "Bob",
+      "owner_is_linked": true,
+      "owner_name": "Alice",
+      "priority": "medium",
+      "progress_pct": 0,
+      "status": "not_started",
+      "task_id": 4,
+      "title": "Book the venue",
+      "total_checkins": 0,
+      "unanswered_checkin_count": 0,
+      "updated_at_local": "2026-08-14T12:00:00+08:00"
+    }
+  ],
+  "notify_manager": {
+    "sent": true,
+    "telegram_message_id": 9001,
+    "to": "Bob"
+  },
+  "notify_manager_fake_sent": [
+    {
+      "chat_id": "700001",
+      "text": "Golden-master scenario check-in."
+    }
+  ],
+  "reassign_low_priority_task": {
+    "deadline_local": "2026-09-15T09:00:00+08:00",
+    "deadline_utc": "2026-09-15T01:00:00Z",
+    "description": null,
+    "hours_since_last_checkin": 0.0,
+    "hours_until_deadline": 765.0,
+    "last_checkin_answered": false,
+    "last_checkin_sent_at_local": "2026-08-14T12:00:00+08:00",
+    "last_reply_at_local": null,
+    "last_reply_text": null,
+    "manager_name": "Bob",
+    "owner_is_linked": false,
+    "owner_name": "Carol",
+    "priority": "low",
+    "progress_pct": 0,
+    "reassigned_from": "Alice",
+    "status": "not_started",
+    "task_id": 2,
+    "title": "Archive old invoices",
+    "total_checkins": 1,
+    "unanswered_checkin_count": 1,
+    "updated_at_local": "2026-08-14T12:00:00+08:00"
+  },
+  "register_alice": {
+    "instructions": "Ask Alice to send /start XCVZEF to the bot.",
+    "link_code": "XCVZEF",
+    "link_url": null,
+    "name": "Alice",
+    "person_id": 2,
+    "role": "team_member"
+  },
+  "register_bob_manager": {
+    "instructions": "Ask Bob to send /start 01SB42 to the bot.",
+    "link_code": "01SB42",
+    "link_url": null,
+    "name": "Bob",
+    "person_id": 1,
+    "role": "manager"
+  },
+  "register_carol": {
+    "instructions": "Ask Carol to send /start JBE6IW to the bot.",
+    "link_code": "JBE6IW",
+    "link_url": null,
+    "name": "Carol",
+    "person_id": 3,
+    "role": "team_member"
+  },
+  "resolve_unmatched": {
+    "attached": true,
+    "checkin_id": 3,
+    "task_id": 1,
+    "task_title": "Finish Q3 board deck",
+    "unmatched_id": 1
+  },
+  "send_chase_for_low_priority_task": {
+    "checkin_id": 2,
+    "sent": true,
+    "task_id": 2,
+    "telegram_message_id": 102,
+    "to": "Alice"
+  },
+  "send_chase_for_overdue_task": {
+    "checkin_id": 1,
+    "sent": true,
+    "task_id": 1,
+    "telegram_message_id": 101,
+    "to": "Alice"
+  },
+  "update_task_to_blocked": {
+    "deadline_local": "2026-08-13T09:00:00+08:00",
+    "deadline_utc": "2026-08-13T01:00:00Z",
+    "description": "Board deck for the Q3 review",
+    "hours_since_last_checkin": 0.0,
+    "hours_until_deadline": -27.0,
+    "last_checkin_answered": false,
+    "last_checkin_sent_at_local": "2026-08-14T12:00:00+08:00",
+    "last_reply_at_local": "2026-08-14T12:00:00+08:00",
+    "last_reply_text": "waiting on the finance numbers from Priya",
+    "manager_name": "Bob",
+    "owner_is_linked": true,
+    "owner_name": "Alice",
+    "priority": "high",
+    "progress_pct": 0,
+    "status": "blocked",
+    "task_id": 1,
+    "title": "Finish Q3 board deck",
+    "total_checkins": 1,
+    "unanswered_checkin_count": 1,
+    "updated_at_local": "2026-08-14T12:00:00+08:00"
+  }
+}

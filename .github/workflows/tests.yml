@@ -1,0 +1,35 @@
+name: tests
+
+on:
+  push:
+    branches: [refactor/production-grade, refactor/agent-prompts, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite (never the `live` marker - no Telegram token in CI)
+        run: pytest -v
+
+      # Fails loudly and specifically if a tool's name, signature, or
+      # docstring drifted, or if any tool's exact JSON output changed -
+      # see tests/test_tool_contract.py and tests/test_golden_master.py.
+      # A deliberate change to either updates the golden file in the same
+      # commit; an accidental one shows up here instead of reaching a live
+      # agent first.
+      - name: Confirm the MCP prompt-contract snapshot is current
+        run: pytest tests/test_tool_contract.py tests/test_golden_master.py -v

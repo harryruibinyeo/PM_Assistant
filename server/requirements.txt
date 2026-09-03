@@ -1,4 +1,17 @@
-mcp
-sqlalchemy
-httpx2
-python-dotenv
+# Pinned to the exact versions this branch was developed and tested
+# against (2026-09-03). Previously unpinned - "mcp" resolving to a newer
+# major version on a fresh install could silently change tool-schema
+# generation, which matters here since that schema is literal prompt
+# content (see docs/ARCHITECTURE.md). Bump deliberately, re-run the full
+# test suite (including tests/test_golden_master.py and
+# tests/test_tool_contract.py), and update this comment's date.
+mcp==2.1.1
+sqlalchemy==2.0.52
+httpx2==2.12.0
+python-dotenv==1.2.3
+
+# Windows has no built-in IANA timezone database (macOS/Linux do) - models.py
+# uses zoneinfo.ZoneInfo(PM_CHASER_TZ) at import time, which raises
+# ZoneInfoNotFoundError on a stock Windows Python without this. Harmless
+# no-op on macOS/Linux, so it's unconditional rather than a platform marker.
+tzdata==2026.3
