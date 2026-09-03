@@ -3,7 +3,7 @@ function - no DB, no fixtures, no network needed."""
 
 from __future__ import annotations
 
-from telegram_client import _to_telegram_markdown_v2
+from pmchaser.integrations.telegram import _to_telegram_markdown_v2
 
 
 def test_bold_converts_to_markdownv2_single_asterisk():

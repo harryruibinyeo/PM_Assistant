@@ -1,13 +1,21 @@
 """Thin wrapper over the two Telegram Bot API calls this project needs:
 sending a message, and checking for new messages since last time.
 
-Deliberately not using a full bot framework (e.g. python-telegram-bot) —
+Deliberately not using a full bot framework (e.g. python-telegram-bot) -
 that's built around keeping a live connection open and listening
 continuously, which was the wrong shape for the original chase/digest jobs
 (single-shot, only check Telegram when an MCP tool is called during a
-scheduled run). `agent/pm_bot.py` is the one caller that *does* poll
-continuously, via its own TelegramClient instance below with a second bot
-token — see its module docstring for why.
+scheduled run). Hermes Agent's own live gateway is the one thing that
+*does* poll continuously, entirely outside this module, via a second bot
+token.
+
+Moved unchanged from server/telegram_client.py as part of the Phase 1
+structural refactor - internals (including the module-level function /
+TelegramClient method duplication - see pmchaser/services/notifications.py's
+module docstring) are deliberately untouched here. The async rewrite that
+removes the blocking-event-loop-starvation risk on the send path is a
+Phase 2 concern, done once, on this already-relocated file, rather than
+twice.
 """
 
 from __future__ import annotations
@@ -54,11 +62,11 @@ class TelegramNotConfigured(RuntimeError):
 
 
 class TelegramClient:
-    """One bot's worth of Telegram API access. `server/tools.py` uses the
+    """One bot's worth of Telegram API access. `pmchaser/services/` uses the
     module-level singleton below (bound to TELEGRAM_BOT_TOKEN, the
-    employee-facing bot); `agent/pm_bot.py` instantiates a second one
-    directly with its own token, entirely independent — no shared state
-    between the two bots' polling or sending."""
+    employee-facing bot); notify_manager instantiates a second one directly
+    with its own token, entirely independent - no shared state between the
+    two bots' polling or sending."""
 
     def __init__(self, token: str):
         self._token = token
@@ -132,7 +140,7 @@ class TelegramClient:
         (MCP tool calls included), so a long-poll (`timeout` up to 25s,
         called back-to-back forever by chase_listener.py) done via the
         blocking `httpx2.get` starved every other concurrent request for
-        the full 25s, every cycle — a real incident, traced by noticing
+        the full 25s, every cycle - a real incident, traced by noticing
         every slow tool call lined up immediately after a peek's own log
         lines. `httpx2.AsyncClient` actually yields control while waiting
         on the network, so the event loop stays free to service everything
@@ -173,9 +181,9 @@ def _default() -> TelegramClient:
 
 def get_bot_username() -> str | None:
     # Tolerates a missing token (unlike send_message/get_updates below,
-    # which raise immediately) — matches the original module's behavior,
+    # which raise immediately) - matches the original module's behavior,
     # relied on by build_link_url degrading to None instead of crashing
-    # when no bot is configured (e.g. test_tools.py's local, no-token runs).
+    # when no bot is configured (e.g. offline tests with no token).
     try:
         return _default().get_bot_username()
     except TelegramNotConfigured:

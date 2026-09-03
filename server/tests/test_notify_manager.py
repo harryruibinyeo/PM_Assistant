@@ -4,12 +4,12 @@ Previously entirely untested (confirmed by exploration of the original
 server/test_tools.py - no reference to notify_manager anywhere in it).
 
 Notable finding while writing this test: notify_manager instantiates its
-own `telegram_client.TelegramClient(token)` directly, rather than going
-through the module-level send_message()/get_updates() functions that the
-`fake_telegram` fixture patches. So it needed its own fake here, patching
-the class method instead. This asymmetry is itself one of the "duplicate
-logic" findings (#12) in the refactor plan - two different ways of sending
-a Telegram message from the same file.
+own `TelegramClient(token)` directly, rather than going through
+pmchaser.integrations.telegram's module-level send_message()/get_updates()
+functions that the `fake_telegram` fixture patches. So it needed its own
+fake here, patching the class method instead. This asymmetry is itself one
+of the "duplicate logic" findings (#12) in the refactor plan - two
+different ways of sending a Telegram message in the same package.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import pytest
 
 @pytest.fixture()
 def fake_manager_bot(fresh_db, monkeypatch: pytest.MonkeyPatch):
-    import telegram_client
+    from pmchaser.integrations import telegram as telegram_integration
 
     sent: list[dict] = []
 
@@ -27,7 +27,7 @@ def fake_manager_bot(fresh_db, monkeypatch: pytest.MonkeyPatch):
         sent.append({"chat_id": chat_id, "text": text})
         return {"ok": True, "result": {"message_id": 4242}}
 
-    monkeypatch.setattr(telegram_client.TelegramClient, "send_message", _fake_send)
+    monkeypatch.setattr(telegram_integration.TelegramClient, "send_message", _fake_send)
     monkeypatch.setenv("TASK_MANAGER_BOT_TOKEN", "test-token")
     return sent
 

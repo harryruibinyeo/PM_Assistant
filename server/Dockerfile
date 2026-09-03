@@ -5,7 +5,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY models.py tools.py telegram_client.py main.py ./
+# main.py stays at the top level (the MCP entrypoint's path is
+# unchanged); the real implementation now lives in the pmchaser/ package
+# (see the Phase 1 structural refactor - the flat models.py/tools.py/
+# telegram_client.py this used to copy no longer exist).
+COPY main.py ./
+COPY pmchaser/ ./pmchaser/
 
 # The SQLite file lives on a mounted volume (see k8s/pvc.yaml) so task data
 # survives a pod restart.

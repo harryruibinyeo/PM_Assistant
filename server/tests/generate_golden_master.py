@@ -13,7 +13,6 @@ Usage (from server/):
 
 from __future__ import annotations
 
-import importlib
 import json
 import sys
 import tempfile
@@ -60,18 +59,16 @@ def main() -> None:
     os.environ.pop("TELEGRAM_BOT_TOKEN", None)
     os.environ["TASK_MANAGER_BOT_TOKEN"] = "test-token"
 
-    import models
-    import telegram_client
-    import tools
+    from pmchaser.db import base as db_base
+    from pmchaser.integrations import telegram as telegram_integration
+    from pmchaser.mcp import tools
 
-    importlib.reload(models)
-    importlib.reload(telegram_client)
-    importlib.reload(tools)
-    models.init_db()
+    db_base.configure_for_testing(str(db_path), tz_name="Asia/Singapore")
+    db_base.init_db()
 
     fake = _FakeTelegram()
-    telegram_client.send_message = fake.send_message
-    telegram_client.get_updates = fake.get_updates
+    telegram_integration.send_message = fake.send_message
+    telegram_integration.get_updates = fake.get_updates
 
     manager_sent: list[dict] = []
 
@@ -79,7 +76,7 @@ def main() -> None:
         manager_sent.append({"chat_id": chat_id, "text": text})
         return {"ok": True, "result": {"message_id": 9001}}
 
-    with mock.patch.object(telegram_client.TelegramClient, "send_message", _fake_manager_send):
+    with mock.patch.object(telegram_integration.TelegramClient, "send_message", _fake_manager_send):
         from golden_scenario import FROZEN_INSTANT, run_scenario  # local import: tests/ on sys.path via conftest rootdir
 
         with freeze_time(FROZEN_INSTANT):
@@ -92,7 +89,7 @@ def main() -> None:
     )
     print(f"Wrote {GOLDEN_PATH} ({len(result)} scenario steps).")
 
-    models.engine.dispose()
+    db_base.engine.dispose()
     for suffix in ("", "-journal", "-wal", "-shm"):
         p = Path(str(db_path) + suffix)
         if p.exists():

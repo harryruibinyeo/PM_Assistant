@@ -22,7 +22,7 @@ GOLDEN_PATH = Path(__file__).parent / "golden" / "tool_outputs.json"
 
 @pytest.fixture()
 def fake_manager_send(fresh_db, monkeypatch: pytest.MonkeyPatch):
-    import telegram_client
+    from pmchaser.integrations import telegram as telegram_integration
 
     sent: list[dict] = []
 
@@ -30,7 +30,7 @@ def fake_manager_send(fresh_db, monkeypatch: pytest.MonkeyPatch):
         sent.append({"chat_id": chat_id, "text": text})
         return {"ok": True, "result": {"message_id": 9001}}
 
-    monkeypatch.setattr(telegram_client.TelegramClient, "send_message", _fake_send)
+    monkeypatch.setattr(telegram_integration.TelegramClient, "send_message", _fake_send)
     monkeypatch.setenv("TASK_MANAGER_BOT_TOKEN", "test-token")
     return sent
 

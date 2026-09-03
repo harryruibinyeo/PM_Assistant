@@ -20,15 +20,16 @@ def backdate_last_checkin(task_id: int, hours_ago: float) -> None:
     """Directly rewrite the most recent check-in's sent_at, simulating
     elapsed time without sleeping (same technique the original
     server/test_tools.py used)."""
-    import models
+    from pmchaser.db import base as db_base
+    from pmchaser.db.models import CheckIn
 
-    with models.session_scope() as session:
+    with db_base.session_scope() as session:
         checkin = session.execute(
-            select(models.CheckIn)
-            .where(models.CheckIn.task_id == task_id)
-            .order_by(models.CheckIn.id.desc())
+            select(CheckIn)
+            .where(CheckIn.task_id == task_id)
+            .order_by(CheckIn.id.desc())
         ).scalars().first()
-        checkin.sent_at = models.utcnow() - timedelta(hours=hours_ago)
+        checkin.sent_at = db_base.utcnow() - timedelta(hours=hours_ago)
 
 
 def link(tools, fake_telegram, name: str, chat_id: str) -> dict:

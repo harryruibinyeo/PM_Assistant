@@ -14,7 +14,6 @@ production code changes and asserts nothing; it only measures and prints.
 from __future__ import annotations
 
 import argparse
-import importlib
 import inspect
 import json
 import random
@@ -40,14 +39,13 @@ def setup(n_people: int, n_tasks: int):
     os.environ["PM_CHASER_TZ"] = "Asia/Singapore"
     os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 
-    import models
-    import telegram_client
-    import tools
+    from pmchaser.db import base as db_base
+    from pmchaser.db.models import Person
+    from pmchaser.integrations import telegram as telegram_integration
+    from pmchaser.mcp import tools
 
-    importlib.reload(models)
-    importlib.reload(telegram_client)
-    importlib.reload(tools)
-    models.init_db()
+    db_base.configure_for_testing(str(db_path), tz_name="Asia/Singapore")
+    db_base.init_db()
 
     class _FakeTelegram:
         def __init__(self):
@@ -61,8 +59,8 @@ def setup(n_people: int, n_tasks: int):
             return []
 
     fake = _FakeTelegram()
-    telegram_client.send_message = fake.send_message
-    telegram_client.get_updates = fake.get_updates
+    telegram_integration.send_message = fake.send_message
+    telegram_integration.get_updates = fake.get_updates
 
     tools.register_person("Bob", role="manager")
     people = []
@@ -71,10 +69,10 @@ def setup(n_people: int, n_tasks: int):
         # Half linked, half not - exercises both the "chase" and
         # "unreachable" branches at realistic scale.
         if i % 2 == 0:
-            with models.session_scope() as session:
+            with db_base.session_scope() as session:
                 from sqlalchemy import select
                 row = session.execute(
-                    select(models.Person).where(models.Person.id == p["person_id"])
+                    select(Person).where(Person.id == p["person_id"])
                 ).scalar_one()
                 row.telegram_chat_id = f"90000{i}"
         people.append(p)
@@ -90,7 +88,7 @@ def setup(n_people: int, n_tasks: int):
         if "task_id" in task and i % 5 == 0:
             tools.telegram_send_message(owner, "checking in", task_id=task["task_id"])
 
-    return models, tools, db_path
+    return db_base, tools, db_path
 
 
 class QueryCounter:
@@ -118,8 +116,8 @@ class QueryCounter:
         event.remove(self.engine, "before_cursor_execute", self._listener)
 
 
-def time_and_count(models, label, fn, *args, **kwargs):
-    with QueryCounter(models.engine) as qc:
+def time_and_count(db_base, label, fn, *args, **kwargs):
+    with QueryCounter(db_base.engine) as qc:
         start = time.perf_counter()
         result = fn(*args, **kwargs)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -239,13 +237,13 @@ def main() -> None:
 
     random.seed(42)
     print(f"Seeding {args.people} people / {args.tasks} tasks into a scratch DB...")
-    models, tools, db_path = setup(args.people, args.tasks)
+    db_base, tools, db_path = setup(args.people, args.tasks)
 
     print("\n== Tool wall time + SQL query counts ==")
-    time_and_count(models, "list_tasks(filter=all)", tools.list_tasks, filter="all")
-    time_and_count(models, "get_chase_plan()", tools.get_chase_plan)
-    time_and_count(models, "get_digest_data()", tools.get_digest_data)
-    time_and_count(models, "chase_now(one person)", tools.chase_now, "Person0")
+    time_and_count(db_base, "list_tasks(filter=all)", tools.list_tasks, filter="all")
+    time_and_count(db_base, "get_chase_plan()", tools.get_chase_plan)
+    time_and_count(db_base, "get_digest_data()", tools.get_digest_data)
+    time_and_count(db_base, "chase_now(one person)", tools.chase_now, "Person0")
 
     print("\n== Tool-schema size per profile (docstring + signature chars, proxy for prompt tokens) ==")
     print("   Caveat: not the real qwen3.6 tokenizer - char count / 4 is a rough,")
@@ -257,7 +255,7 @@ def main() -> None:
         print(f"\n== Real LM Studio probe ({LM_STUDIO_URL}) ==")
         probe_lm_studio_latency()
 
-    models.engine.dispose()
+    db_base.engine.dispose()
     for suffix in ("", "-journal", "-wal", "-shm"):
         p = Path(str(db_path) + suffix)
         if p.exists():
