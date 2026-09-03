@@ -1,0 +1,8 @@
+# backup.sh runs on the Mac (bash) - a Windows checkout with
+# core.autocrlf=true would otherwise store/checkout it with CRLF line
+# endings, breaking its #!/usr/bin/env bash shebang there
+# (bash: backup.sh: bad interpreter, or a `$'\r': command not found` on
+# every line). Force LF regardless of the committing/checking-out
+# platform's autocrlf setting - this was actually observed on this repo's
+# own working tree while developing Phase 4 on Windows.
+*.sh text eol=lf

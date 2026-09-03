@@ -15,6 +15,23 @@ message on this branch is a full writeup of what changed and why
 (`git log` to read them). This file is the *operational* summary: what to
 actually do on this machine.
 
+Two other branches build on this one, independently, for different kinds
+of change:
+- `refactor/agent-prompts` - the agent-loop latency work (per-profile
+  tool exposure, `record_reply_outcome`). **Touches `hermes-config/`** -
+  Procedure B below applies once it's checked out.
+- `refactor/operations` - Phase 4: Alembic migrations, `/healthz` +
+  Docker `HEALTHCHECK`, a non-root container user, `docker-compose.yml`
+  (replacing the manual `docker run --restart=always`), an optional
+  bearer-token gate on the MCP endpoint (off by default), and
+  `backup.sh`. **Server/ops only - no `hermes-config/` changes.**
+  Procedure A applies. See "Phase 4 operational notes" near the end of
+  this file for what's specifically different about testing this one.
+
+They're siblings (both branch off `refactor/production-grade`, not off
+each other) - check `git log --oneline -5` if you're not sure which one
+you were told to test.
+
 ## Status as of this file (check before trusting the rest of this doc)
 
 Run this first - it tells you which procedure below applies:
@@ -162,6 +179,66 @@ separate port, production untouched), *then*:
    assume) in that same repo directory to restore the real
    `hermes-config/` content through the symlinks; run the gateway restart
    again; restart the production Docker container if it was ever stopped.
+
+## Phase 4 operational notes (`refactor/operations`)
+
+Procedure A applies as written, with a few additions specific to this
+branch:
+
+- **Alembic (one-time step, real DB only).** This branch adds tracked
+  migrations. The live database already has every table by hand
+  (`init_db()`'s `create_all()`), so before running any `alembic` command
+  against the **real** `pm_chaser.db`, run `alembic stamp head` (never
+  `upgrade head` - it will fail with "table already exists", loudly and
+  safely, no partial writes). Full explanation and the ongoing workflow
+  for a real schema change: `docs/MIGRATIONS.md`. Not needed at all for
+  Procedure A's scratch-DB testing - a fresh scratch DB has no history to
+  reconcile, `alembic upgrade head` just works on it directly.
+- **`docker-compose.yml` exists now**, matching the real `docker run
+  --restart=always` command exactly (same image, same port `18173`, same
+  named volume `pm-chaser-data`) plus a Docker `HEALTHCHECK` and
+  loopback-only port publishing. It's the eventual replacement for the
+  manual command, not required reading for scratch-DB testing (Procedure
+  A's manual `docker run` for the *test* container is still correct - a
+  compose file for a one-off test container would be more ceremony than
+  the task needs). Cutting the **real** deployment over to it is a
+  separate decision to make explicitly with the user, not an automatic
+  side effect of testing this branch - it means adopting the existing
+  `pm-chaser-data` volume, which `docker-compose.yml`'s `external: true`
+  declaration is what makes safe.
+- **Non-root container user.** The rebuilt image now runs the app as a
+  non-root `app` user (`server/entrypoint.py` chowns `/data` at container
+  start before dropping from root). This was reasoned through carefully
+  but **only verified with a real `docker build`/`docker run` on this
+  Mac, not on the Windows machine this branch was developed on** (no
+  Docker available there) - watch `docker logs` on first boot against
+  both a brand-new scratch volume and (later, if the real deployment ever
+  adopts this image) the existing `pm-chaser-data` volume specifically;
+  a `PermissionError` writing to `/data` would mean the chown step didn't
+  do what it was reasoned to do.
+- **`/healthz`** (no auth, no token needed) - `curl http://localhost:<port>/healthz`
+  should return `{"status":"ok"}` with a 200 once the container is up;
+  useful as a first sanity check before going further.
+- **`PM_CHASER_MCP_TOKEN` is unset by default** - nothing about auth
+  changes unless you explicitly set it. If you do want to test it: set it
+  in the test container's env, then confirm `/internal/peek` returns 401
+  with no `Authorization` header and passes through with the right
+  `Bearer <token>` one, while `/healthz` stays open either way. Turning
+  this on for the **real** deployment additionally means adding
+  `headers: Authorization: "Bearer ${PM_CHASER_MCP_TOKEN}"` to
+  `mcp_servers.pm-chaser` in **both** `hermes-config/*/config.yaml` files
+  and the matching value to `~/.hermes/.env` - that part *is* a
+  hermes-config change (Procedure B territory) even though this branch
+  itself carries none; don't do it without confirming with the user
+  first, same as any other hermes-config edit.
+- **`backup.sh`** (repo root) - `./backup.sh [dest-dir]` takes a real,
+  WAL-safe backup of the live `pm-chaser-data` volume into a timestamped
+  file, without touching the running container. Verified correct against
+  a real WAL-mode scratch database (the underlying `sqlite3.Connection.backup()`
+  call); the `docker run`/volume-mounting wrapper around it has **not**
+  been run for real yet (no Docker on the machine this was written on) -
+  worth a dry run against a scratch volume before trusting it for a real
+  backup.
 
 ## Where to find more context
 

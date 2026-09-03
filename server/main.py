@@ -13,8 +13,11 @@ from mcp.server import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from pmchaser.db.base import init_db
+from sqlalchemy import text
+
+from pmchaser.db.base import engine, init_db
 from pmchaser.mcp import tools
+from pmchaser.mcp.auth import wrap_if_configured
 
 # Loads server/.env if present (local dev). In Kubernetes, TELEGRAM_BOT_TOKEN
 # will instead come from a mounted Secret as a real environment variable, so
@@ -62,8 +65,38 @@ async def peek(request: Request) -> JSONResponse:
     return JSONResponse({"new": new})
 
 
+# Docker HEALTHCHECK / a future orchestrator's liveness probe: proves the
+# process's own DB connection actually works, not just that the HTTP
+# server is accepting connections at all. A process that's up but can't
+# reach its SQLite file (bad volume mount, a permissions change) should
+# read as unhealthy, not healthy.
+@mcp.custom_route("/healthz", methods=["GET"])
+async def healthz(request: Request) -> JSONResponse:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 - any failure means unhealthy
+        return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+    return JSONResponse({"status": "ok"})
+
+
 if __name__ == "__main__":
+    import uvicorn
+
     init_db()
     host = os.environ.get("PM_CHASER_HOST", "0.0.0.0")
     port = int(os.environ.get("PM_CHASER_PORT", "8000"))
-    mcp.run(transport="streamable-http", host=host, port=port)
+
+    # Builds and runs the app by hand (what mcp.run(transport=
+    # "streamable-http", ...) does internally - see MCPServer.
+    # run_streamable_http_async's source) rather than using that
+    # convenience method directly, so PM_CHASER_MCP_TOKEN's optional
+    # bearer-auth middleware can wrap every route (both the MCP endpoint
+    # and /internal/peek) before uvicorn ever sees the app. See
+    # pmchaser/mcp/auth.py for why this isn't done via the mcp SDK's own
+    # OAuth-oriented auth parameters instead.
+    app = wrap_if_configured(
+        mcp.streamable_http_app(host=host),
+        os.environ.get("PM_CHASER_MCP_TOKEN"),
+    )
+    uvicorn.run(app, host=host, port=port)
