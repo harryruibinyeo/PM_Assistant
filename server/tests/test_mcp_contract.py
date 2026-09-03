@@ -1,12 +1,18 @@
 """Automates the original server/test_wire.py into pytest: boots a real
 `python main.py` subprocess (streamable-http, the real transport both
 Hermes profiles use) and asserts the live MCP endpoint advertises exactly
-the intended 16 tools, with schemas matching the golden tool contract.
+the intended tools, with schemas matching the golden tool contract.
 
 This is the strongest guarantee in the whole Phase 0 safety net: unlike
 tests/test_tool_contract.py's pure `inspect.signature()` introspection,
 this asks the *actual* MCP protocol layer what it would send an agent -
 the real JSON schema that becomes part of the model's prompt.
+
+Phase 3 addition: the same live-server approach, parameterized by
+PM_CHASER_TOOL_PROFILE, proves each profile's server genuinely advertises
+only its own tool subset (pmchaser/mcp/profiles.py) - the actual,
+measurable fix for the Phase 0 finding that pmchaser-bot paid for all 16
+tools' schemas despite using 5.
 """
 
 from __future__ import annotations
@@ -20,9 +26,12 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+
+from pmchaser.mcp.profiles import PMCHASER_BOT_TOOLS, TASK_MANAGER_BOT_TOOLS
 
 SERVER_ROOT = Path(__file__).parent.parent
 
@@ -54,10 +63,13 @@ def _wait_until_accepting(host: str, port: int, timeout: float = 15.0) -> None:
     raise RuntimeError(f"server on {host}:{port} never started listening: {last_err}")
 
 
-@pytest.fixture(scope="module")
-def running_server():
+@contextmanager
+def _running_server(tool_profile: str | None = None):
     """Boots the real server as a subprocess against a scratch DB, no
-    Telegram token required (tool registration doesn't touch Telegram)."""
+    Telegram token required (tool registration doesn't touch Telegram).
+    `tool_profile=None` explicitly unsets PM_CHASER_TOOL_PROFILE (rather
+    than merely not setting it), so a value leaked from the outer shell
+    environment can never skew the "default, all-tools" case."""
     port = _free_port()
     db_path = Path(tempfile.gettempdir()) / f"pm_chaser_mcp_contract_{uuid.uuid4().hex}.db"
 
@@ -68,6 +80,10 @@ def running_server():
     env["PM_CHASER_TZ"] = "Asia/Singapore"
     env.pop("TELEGRAM_BOT_TOKEN", None)
     env.pop("TASK_MANAGER_BOT_TOKEN", None)
+    if tool_profile is None:
+        env.pop("PM_CHASER_TOOL_PROFILE", None)
+    else:
+        env["PM_CHASER_TOOL_PROFILE"] = tool_profile
 
     proc = subprocess.Popen(
         [sys.executable, "main.py"],
@@ -99,6 +115,24 @@ def running_server():
                     p.unlink()
             except OSError:
                 pass
+
+
+@pytest.fixture(scope="module")
+def running_server():
+    with _running_server(tool_profile=None) as url:
+        yield url
+
+
+@pytest.fixture(scope="module")
+def pmchaser_bot_server():
+    with _running_server(tool_profile="pmchaser-bot") as url:
+        yield url
+
+
+@pytest.fixture(scope="module")
+def task_manager_bot_server():
+    with _running_server(tool_profile="task-manager-bot") as url:
+        yield url
 
 
 async def _list_tools(url: str):
@@ -167,3 +201,71 @@ def test_a_real_mcp_client_can_round_trip_create_and_list(running_server):
     same assertion server/test_wire.py made manually."""
     tasks = asyncio.run(_round_trip(running_server))
     assert any(t["title"] == "Wire protocol test task" for t in tasks)
+
+
+def test_pmchaser_bot_profile_server_advertises_only_its_5_tools(pmchaser_bot_server):
+    """The actual, measurable fix for the Phase 0 finding: booted with
+    PM_CHASER_TOOL_PROFILE=pmchaser-bot, the live server must advertise
+    exactly PMCHASER_BOT_TOOLS - not 16, not some other subset. This is
+    what an agent's MCP client genuinely sees; a source-level check of
+    pmchaser/mcp/profiles.py alone couldn't prove main.py actually wires
+    the env var through to registration."""
+    tools = asyncio.run(_list_tools(pmchaser_bot_server))
+    names = {t.name for t in tools}
+    assert names == set(PMCHASER_BOT_TOOLS)
+
+
+def test_task_manager_bot_profile_server_advertises_only_its_14_tools(task_manager_bot_server):
+    tools = asyncio.run(_list_tools(task_manager_bot_server))
+    names = {t.name for t in tools}
+    assert names == set(TASK_MANAGER_BOT_TOOLS)
+
+
+def test_pmchaser_bot_profile_server_still_serves_internal_peek():
+    """The /internal/peek route (not an MCP tool - see main.py) must stay
+    reachable on the pmchaser-bot profile, since chase_listener.py's
+    hardcoded PEEK_URL targets pmchaser-bot's port specifically.
+
+    This test's env has no TELEGRAM_BOT_TOKEN, so the route correctly
+    responds 503 (TelegramNotConfigured) rather than 200 - what matters
+    here is that the route is *registered at all* (any response other
+    than 404), not what it answers without a token configured; a 404
+    would mean this profile's server never registered the route in the
+    first place, which is the actual regression this guards against.
+    """
+    import urllib.error
+    import urllib.request
+
+    with _running_server(tool_profile="pmchaser-bot") as url:
+        peek_url = url.replace("/mcp", "/internal/peek") + "?timeout=1"
+        try:
+            with urllib.request.urlopen(peek_url, timeout=15) as resp:
+                status = resp.status
+                body = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            body = json.loads(exc.read())
+
+    assert status != 404, "expected /internal/peek to be registered on the pmchaser-bot profile"
+    assert status == 503
+    assert "error" in body  # TelegramNotConfigured, expected with no token in this test's env
+
+
+def test_task_manager_bot_profile_server_has_no_internal_peek():
+    """chase_listener.py only ever hits pmchaser-bot's port - a
+    task-manager-bot-only instance has no reason to expose this route,
+    and not exposing it makes it obvious if something is misconfigured to
+    poll the wrong server."""
+    import urllib.error
+    import urllib.request
+
+    with _running_server(tool_profile="task-manager-bot") as url:
+        peek_url = url.replace("/mcp", "/internal/peek") + "?timeout=1"
+        try:
+            urllib.request.urlopen(peek_url, timeout=15)
+            raised = False
+        except urllib.error.HTTPError as exc:
+            raised = True
+            status = exc.code
+    assert raised, "expected /internal/peek to 404 on a task-manager-bot-only instance"
+    assert status == 404

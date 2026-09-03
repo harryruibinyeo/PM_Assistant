@@ -10,9 +10,19 @@ model:
   base_url: http://localhost:1234/v1
   image_input_mode: native
 _config_version: 33
+# Phase 3 (refactor/agent-prompts): pm-chaser now runs as two separate
+# server instances from the same image/database, each advertising only
+# the tools this profile's own SOUL.md actually calls by name (confirmed
+# by grepping it - 14 of the 16 tools; missing get_chase_plan and
+# notify_manager, which belong to pmchaser-bot only). This profile's
+# instance is started with PM_CHASER_TOOL_PROFILE=task-manager-bot and
+# PM_CHASER_PORT=18174 - a different port from pmchaser-bot's :18173,
+# since they're now genuinely two processes, not one. See
+# server/pmchaser/mcp/profiles.py for the exact tool list and
+# BRANCH_TESTING.md for how to run both instances together.
 mcp_servers:
   pm-chaser:
-    url: http://localhost:18173/mcp
+    url: http://localhost:18174/mcp
     enabled: true
 # The global terminal.cwd (".") was resolving to Hermes's own install tree
 # (~/.hermes/hermes-agent), which made every conversation load that repo's

@@ -85,27 +85,30 @@ def test_tool_contract_is_byte_identical_to_the_golden_snapshot(fresh_db):
 
 
 def test_mcp_endpoint_registers_all_16_tools_with_matching_names():
-    """Confirms main.py's mcp.add_tool(...) calls register exactly the
-    tool functions this contract snapshot covers - catches a tool being
-    silently dropped from (or added to) the live MCP server without a
-    matching contract update."""
-    import ast
+    """Confirms main.py's default (PM_CHASER_TOOL_PROFILE unset) registers
+    exactly the tool functions this contract snapshot covers - catches a
+    tool being silently dropped from (or added to) the default,
+    all-tools server without a matching contract update.
 
-    main_src = (Path(__file__).parent.parent / "main.py").read_text(encoding="utf-8")
-    tree = ast.parse(main_src)
+    As of Phase 3, main.py registers tools via a loop over
+    pmchaser.mcp.profiles.tools_for_profile(...) rather than one static
+    mcp.add_tool(tools.xxx) call per tool - a per-tool AST scan of
+    main.py's source (this test's original approach) can no longer see
+    16 individual calls to check, so this instead calls the actual
+    function that decides what gets registered. The equivalent guarantee
+    for the per-profile (non-default) case lives in
+    tests/test_mcp_contract.py, which boots real servers with
+    PM_CHASER_TOOL_PROFILE set and checks their live advertised schema -
+    a stronger check than parsing source, and the only way to verify a
+    profile's server actually serves what pmchaser/mcp/profiles.py claims.
+    """
+    from pmchaser.mcp.profiles import tools_for_profile
 
-    registered = set()
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "add_tool"
-        ):
-            arg = node.args[0]
-            if isinstance(arg, ast.Attribute):
-                registered.add(arg.attr)
+    registered = set(tools_for_profile(None))
 
     assert registered == set(TOOL_NAMES), (
-        f"main.py's mcp.add_tool(...) registrations {sorted(registered)} "
-        f"don't match the expected 16-tool contract {sorted(TOOL_NAMES)}"
+        f"tools_for_profile(None) returns {sorted(registered)}, which "
+        f"doesn't match the expected 16-tool contract {sorted(TOOL_NAMES)} "
+        f"- main.py's default (no PM_CHASER_TOOL_PROFILE set) registers "
+        f"exactly this set."
     )

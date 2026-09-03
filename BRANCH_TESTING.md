@@ -8,35 +8,43 @@ irreversible to a tool that's in real daily use.
 
 ## What this branch is
 
-`refactor/production-grade` is a production-hardening refactor of
-pm-chaser's `server/` code - the MCP tool service both Hermes bot
-profiles (`task-manager-bot`, `pmchaser-bot`) talk to. Every commit
-message on this branch is a full writeup of what changed and why
-(`git log` to read them). This file is the *operational* summary: what to
-actually do on this machine.
+Two branches carry this refactor of pm-chaser's `server/` code - the MCP
+tool service both Hermes bot profiles (`task-manager-bot`, `pmchaser-bot`)
+talk to - and this file lives on both:
+
+- `refactor/production-grade` - `server/` code only. Phases 0-2: the
+  safety-net tests, the `tools.py`→`pmchaser/` package split, N+1/index/
+  logging fixes and 5 flagged bug fixes - all behavior-identical or
+  narrowly-scoped, verified by an automated golden-master snapshot that
+  diffs every tool's exact output against the pre-refactor original.
+  `hermes-config/` is untouched here.
+- `refactor/agent-prompts` (branches off the one above) - Phase 3, the
+  agent-loop latency work: per-profile tool exposure, trimmed docstrings,
+  new composite tools. This phase **does** touch `hermes-config/` -
+  it's the one this file's higher-risk procedure exists for.
+
+Every commit message on both branches is a full writeup of what changed
+and why (`git log` to read them). This file is the *operational*
+summary: what to actually do on this machine.
 
 ## Status as of this file (check before trusting the rest of this doc)
 
-Run this first - it tells you which procedure below applies:
+Run this first - it tells you which procedure below applies, regardless
+of which of the two branches above you were told to test:
 
 ```bash
 git -C <path-to-your-pm-chaser-clone> diff main -- hermes-config/
 ```
 
-- **Empty output** → only `server/` code has changed so far. `hermes-config/`
-  (`SOUL.md`, `SKILL.md`, both `config.yaml`s) is byte-identical to
-  production. Checking out this branch has **zero effect on live bot
-  behavior** by itself - only rebuilding and restarting the Docker
-  container makes the server changes take effect at all. This is the
-  common case (Phases 0-2: safety-net tests, the tools.py→pmchaser/
-  package split, N+1/index/logging fixes - all behavior-identical or
-  narrowly-flagged bug fixes, verified by an automated golden-master
-  snapshot that diffs every tool's exact output against the pre-refactor
-  original).
-- **Non-empty output** → a later phase (agent-loop latency work: per-profile
-  tool exposure, trimmed docstrings, new composite tools) has landed and
-  touched `hermes-config/`. **This is a different, higher-risk situation -
-  skip to "Once hermes-config is touched" below, not the simple procedure.**
+- **Empty output** → only `server/` code has changed so far (you're on
+  `refactor/production-grade`, or an early point on `refactor/agent-prompts`
+  before its hermes-config commit). Checking out the branch has **zero
+  effect on live bot behavior** by itself - only rebuilding and
+  restarting the Docker container makes the server changes take effect
+  at all. Use **Procedure A**.
+- **Non-empty output** → `refactor/agent-prompts`' per-profile tool
+  exposure (and whatever else Phase 3 has added since) has landed.
+  **This is a different, higher-risk situation - use Procedure B, not A.**
 
 If this section's instructions ever contradict what `git log` and `git
 diff` actually show, trust the live repository state over this file - it
@@ -138,30 +146,72 @@ Applies when `git diff main -- hermes-config/` is empty.
 
 ## Procedure B: once hermes-config is touched (higher risk)
 
-Applies when `git diff main -- hermes-config/` is non-empty. Do Procedure
-A's steps 1-7 first (get the new server running safely on a scratch DB,
-separate port, production untouched), *then*:
+Applies when `git diff main -- hermes-config/` is non-empty - as of Phase
+3's per-profile tool exposure, this is real, not hypothetical: pm-chaser
+now runs as **two** server instances from the same image and the same
+database, each advertising only the tools that profile's own
+`SOUL.md`/`SKILL.md` actually calls (see
+`server/pmchaser/mcp/profiles.py`):
+
+| Profile | `PM_CHASER_TOOL_PROFILE` | Port | config.yaml points at |
+|---|---|---|---|
+| `pmchaser-bot` | `pmchaser-bot` | `18173` (unchanged - `chase_listener.py`'s `PEEK_URL` is hardcoded to it) | `hermes-config/pmchaser-bot/config.yaml` |
+| `task-manager-bot` | `task-manager-bot` | `18174` (new) | `hermes-config/task-manager-bot/config.yaml` |
+
+Do Procedure A's steps 1-4 first (rebuild the image, get a scratch DB
+copy ready), *then*:
 
 1. Confirm with the user that now is an acceptable time for their live
-   manager-facing bot to briefly run experimental behavior - this step
-   changes it immediately, not after "deploying."
-2. Re-point that branch's `hermes-config/*/config.yaml` `mcp_servers.pm-chaser.url`
-   at the test container's port from Procedure A (so the agent talks to
-   the scratch-DB instance, not production data) - confirm what port is
-   actually configured before proceeding; don't assume.
-3. Check out the branch in the repo directory the symlinks point into.
-   This is the moment live `SOUL.md`/`SKILL.md`/`config.yaml` changes.
-4. Run a supervised gateway restart (e.g. `hermes gateway restart`) - a
+   manager-facing bot to briefly run experimental behavior - checking
+   out the branch changes it immediately, not after "deploying."
+2. Start **two** containers from the rebuilt image, both pointed at the
+   **same** scratch DB file from Procedure A step 4 (they share the
+   Telegram-cursor and task/person tables - running them against two
+   different DB files will make replies and chase state silently
+   disagree between the two):
+   ```bash
+   docker run -d --name pm-chaser-mcp-test-pmchaser \
+     -e PM_CHASER_DB_PATH=/data/pm_chaser_test.db \
+     -e PM_CHASER_TOOL_PROFILE=pmchaser-bot \
+     -e PM_CHASER_PORT=18173 -p 18173:18173 \
+     -v <path-to-scratch-db-dir>:/data \
+     pm-chaser-mcp:test
+
+   docker run -d --name pm-chaser-mcp-test-taskmanager \
+     -e PM_CHASER_DB_PATH=/data/pm_chaser_test.db \
+     -e PM_CHASER_TOOL_PROFILE=task-manager-bot \
+     -e PM_CHASER_PORT=18174 -p 18174:18174 \
+     -v <path-to-scratch-db-dir>:/data \
+     pm-chaser-mcp:test
+   ```
+   Adjust env vars/mounts to mirror whatever `docker inspect` showed for
+   the real production container (Procedure A step 2) - `TELEGRAM_BOT_TOKEN`
+   in particular, which both instances need (only `pmchaser-bot`'s
+   strictly needs `TASK_MANAGER_BOT_TOKEN`, for `notify_manager` - harmless
+   to give both).
+3. Verify both are up and advertise the right tools before touching
+   Hermes at all: `docker logs` each, and if Python is available,
+   `server/tests/test_mcp_contract.py`'s approach (a real MCP client
+   listing tools against each port) confirms `pmchaser-bot`'s instance
+   serves exactly 5 tools and `task-manager-bot`'s serves exactly 14.
+4. Check out the branch in the repo directory the symlinks point into.
+   This is the moment live `SOUL.md`/`SKILL.md`/`config.yaml` changes -
+   the checked-out `config.yaml`s already point at `:18173`/`:18174`
+   (see the table above), matching the containers from step 2.
+5. Run a supervised gateway restart (e.g. `hermes gateway restart`) - a
    bare re-invocation is refused while a gateway is already running under
    launchd; use the supervised command, not a manual restart.
-5. Test via real Telegram messages to the real bots. The database is
+6. Test via real Telegram messages to the real bots. The database is
    empty (scratch copy) so you'll need to register a person and create a
    task or two before there's anything to chase.
-6. **To revert:** stop the test container; check out the production
+7. **To revert:** stop both test containers; check out the production
    branch (`main`, or whatever it actually is - confirm rather than
    assume) in that same repo directory to restore the real
-   `hermes-config/` content through the symlinks; run the gateway restart
-   again; restart the production Docker container if it was ever stopped.
+   `hermes-config/` content (both `config.yaml`s point back at whatever
+   the single-server production URL was) through the symlinks; run the
+   gateway restart again; make sure the single production Docker
+   container is running (it was never stopped by this procedure, but
+   confirm).
 
 ## Where to find more context
 
