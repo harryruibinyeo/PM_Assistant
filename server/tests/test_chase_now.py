@@ -98,3 +98,67 @@ def test_the_scheduled_sweep_correctly_ignores_the_same_far_future_task(fresh_db
 
     assert task_id not in [c["task_id"] for c in plan["to_chase"]]
     assert task_id in [t["task_id"] for t in manual["tasks"]]
+
+
+def test_chase_now_with_matched_tasks_carries_an_action_required_reminder(fresh_db, fake_telegram):
+    """Regression test for a real live incident: the model called
+    chase_now, got real matched tasks back, then told the manager a
+    message had been sent without ever calling telegram_send_message -
+    "confident-but-false-confirmation." This reminder is a second,
+    proximate line of defense on top of SOUL.md rule 12, added directly
+    to the response the model reads at that exact decision point. Must
+    name the specific tool call and the most urgent task's id."""
+    tools = fresh_db
+    link(tools, fake_telegram, "Alice", "555001")
+    task_id = tools.create_task(
+        "Task", "Alice", "high", deadline=local_iso(-timedelta(hours=2))
+    )["task_id"]
+
+    result = tools.chase_now("Alice")
+
+    assert "action_required" in result
+    assert "telegram_send_message" in result["action_required"]
+    assert f"task_id={task_id}" in result["action_required"]
+    assert "Alice" in result["action_required"]
+
+
+def test_chase_now_with_no_matched_tasks_has_no_action_required(fresh_db, fake_telegram):
+    """No task to chase means nothing needs sending - the field must not
+    appear (its absence is itself meaningful: "nothing left to do")."""
+    tools = fresh_db
+    link(tools, fake_telegram, "Alice", "555001")
+    # No tasks created for Alice at all.
+
+    result = tools.chase_now("Alice")
+
+    assert "action_required" not in result
+    assert "message" in result  # the existing "nothing to chase" explanation
+
+
+def test_chase_now_unreachable_owner_has_no_action_required(fresh_db, fake_telegram):
+    """An unreachable owner can't be sent anything regardless - the field
+    would be actively misleading here, so it must not appear."""
+    tools = fresh_db
+    tools.register_person("Carol")  # never linked
+    tools.create_task("Task", "Carol", "medium", deadline=local_iso(-timedelta(hours=1)))
+
+    result = tools.chase_now("Carol")
+
+    assert result["reachable"] is False
+    assert "action_required" not in result
+
+
+def test_chase_now_blocked_only_tasks_has_no_action_required(fresh_db, fake_telegram):
+    """Every open task blocked means nothing left to chase - same as the
+    empty-tasks case, the field must not appear."""
+    tools = fresh_db
+    link(tools, fake_telegram, "Alice", "555001")
+    task_id = tools.create_task(
+        "Task", "Alice", "high", deadline=local_iso(-timedelta(hours=2))
+    )["task_id"]
+    tools.update_task(task_id, status="blocked")
+
+    result = tools.chase_now("Alice")
+
+    assert result["tasks"] == []
+    assert "action_required" not in result

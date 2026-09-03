@@ -1,5 +1,6 @@
 {
   "chase_now_alice": {
+    "action_required": "Nothing has been sent to Alice yet. Write ONE message covering all 3 task(s) in `tasks` above, then call telegram_send_message(owner_name='Alice', text=<your message>, task_id=1) - the most urgent task's id. Only tell the manager a message was sent after that call actually returns a real checkin_id/telegram_message_id; do not confirm before calling it.",
     "newly_linked": [],
     "owner_name": "Alice",
     "reachable": true,

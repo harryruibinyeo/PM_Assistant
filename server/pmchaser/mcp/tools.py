@@ -377,6 +377,12 @@ def get_chase_plan(
             link codes. Not their fault and never an ignored ping.
         skipped: filtered out this run, each with a reason.
         manager_name: who to send escalations to.
+        action_required: present only when to_chase or to_escalate is
+            non-empty. States plainly that nothing has been sent or
+            escalated yet and exactly which tool call each entry still
+            needs. Never report a task as chased or escalated without
+            that call actually returning first — a real ID from its
+            result is what backs up a confirmation, not this field.
 
     Args:
         due_soon_hours: How far ahead counts as "due soon".
@@ -424,6 +430,13 @@ def chase_now(owner_name: str) -> dict:
     not just this owner. Handle those the same way get_chase_plan's caller
     does (interpret and call update_task, or resolve_unmatched) before
     sending the new chase message — they are not picked up again later.
+
+    When `tasks` is non-empty, the response also carries an
+    `action_required` field stating plainly that nothing has been sent
+    yet and exactly which telegram_send_message call to make. Never
+    report a message as sent without that call actually returning a real
+    checkin_id/telegram_message_id first — describing what you're about
+    to send is not the same as sending it.
 
     Args:
         owner_name: The person to chase. Must already be registered — never
