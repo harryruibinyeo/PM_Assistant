@@ -53,17 +53,23 @@ flowchart LR
             PCB["Automation bot<br/>─────────<br/>15-min chase sweep<br/>+ instant trigger on new reply"]
         end
 
-        MCP[["Task service<br/>Docker container<br/>─────────<br/>16 MCP tools<br/>SQLite"]]
+        MCP1[["Task service (manager-facing)<br/>Docker container · 14 tools"]]
+        MCP2[["Task service (automation)<br/>Docker container · 6 tools"]]
+        DB[("SQLite<br/>shared by both")]
 
         TMB -. reasons via .-> LM
         PCB -. reasons via .-> LM
-        TMB -->|tool calls| MCP
-        PCB -->|tool calls| MCP
+        TMB -->|tool calls| MCP1
+        PCB -->|tool calls| MCP2
+        MCP1 --- DB
+        MCP2 --- DB
     end
 
     TMB ==>|private DM| MGR["👤 Manager<br/>creates · chases · decides"]
-    MCP ==>|private DM| EMP["👥 Team<br/>gets chased · replies"]
+    MCP2 ==>|private DM| EMP["👥 Team<br/>gets chased · replies"]
 ```
+
+Same image, same database, same tool implementations — two separate running instances, each advertising only the tools its own bot's instructions actually use (see [Architecture](./docs/ARCHITECTURE.md#per-profile-tool-exposure)), rather than every tool being available to every bot regardless of use.
 
 **The dividing line that shapes the whole design**: code decides *what* and *who* — which tasks are overdue, who was pinged too recently, who to escalate. The model decides *what to say* and *what a reply means*. Rules that must always hold live in code, where they're guaranteed; everything that requires judgment or language stays with the model. This wasn't the original design — it came from a real debugging session where the opposite approach quietly failed.
 
@@ -77,26 +83,33 @@ flowchart LR
 | Agent runtime | [Hermes Agent](https://github.com/NousResearch/hermes-agent), two isolated profiles |
 | Tool interface | [Model Context Protocol](https://modelcontextprotocol.io) — one tool server, shared by both agents |
 | Agent behavior | Plain-language instruction files — no code governs tone, escalation logic, or judgment calls |
-| Task service | Python 3.12, the official MCP SDK, exposed over `streamable-http` |
-| Data | SQLite + SQLAlchemy |
+| Task service | Python 3.12, the official MCP SDK, exposed over `streamable-http`, laid out as a layered `pmchaser/` package (repositories → services → MCP adapters) |
+| Data | SQLite + SQLAlchemy, WAL mode, tracked migrations via Alembic |
 | Messaging | Telegram Bot API, two separate bots (manager-facing / team-facing) |
-| Hosting | Plain Docker, `--restart=always` — deliberately *not* Kubernetes, after trying it first |
+| Hosting | Docker Compose, non-root container, `/healthz` + `HEALTHCHECK`, loopback-only ports — deliberately *not* Kubernetes, after trying it first |
 | Scheduling | Hermes cron, plus an event-driven listener for near-instant reply handling |
 
 **→ What each AI/agent component actually does, and why: [`docs/AI_TOOLING.md`](./docs/AI_TOOLING.md)**
-**→ Full MCP tool catalog (all 16 tools): [`docs/MCP_TOOLS.md`](./docs/MCP_TOOLS.md)**
+**→ Full MCP tool catalog (all 17 tools, and which subset each bot actually gets): [`docs/MCP_TOOLS.md`](./docs/MCP_TOOLS.md)**
 
 ## Repository tour
 
 ```
-server/            The MCP tool service — task/person CRUD, chase planning, Telegram I/O, SQLAlchemy models
+server/            The MCP tool service, as a layered pmchaser/ package:
+                     pmchaser/repositories/  - raw queries
+                     pmchaser/services/      - business logic (chase policy, messaging, reply outcomes)
+                     pmchaser/mcp/           - the 17 tool adapters + profiles.py (per-bot tool exposure)
+                     pmchaser/db/migrations/ - Alembic
+                   backup.sh and docker-compose.yml live at the repo root, not here.
 listener/          chase_listener.py — host-side event-driven reply detection (launchd service)
 hermes-config/     The live, version-controlled brains of both bots: SOUL.md, SKILL.md files, config.yaml
                    (symlinked back to ~/.hermes — see hermes-config/README.md)
 skills/            Original pre-Hermes-migration skill definitions, kept for reference
-docs/              Architecture, MCP tool catalog, and AI/agent tooling deep dives
-k8s/               Kubernetes manifests from an earlier deployment, superseded by plain Docker — kept
+docs/              Architecture, MCP tool catalog, AI/agent tooling, and migration deep dives
+k8s/               Kubernetes manifests from an earlier deployment, superseded by Docker Compose — kept
                    for reference, not the live deployment
+docker-compose.yml Runs both profile-scoped server instances against one shared database
+backup.sh          WAL-safe SQLite backup via the Online Backup API
 PROJECT_MANAGEMENT.md   The full running devlog: every decision, bug, and fix, in the order it happened
 ```
 
@@ -106,9 +119,10 @@ A local ~35B model chaining several tool calls with judgment calls in between fa
 
 - Collapsed multi-step chase/digest logic into single, server-side planning calls after the model proved unreliable at chaining 5+ tool calls with filtering logic in between
 - Disabled a tool-discovery bridge that the model would unpredictably route through even when a tool was already directly callable — including one case of a once-only tool getting called twice in the same run
-- Closed a "confident-but-false" failure mode where the model narrated a successful send without ever calling the send tool, by making job success depend on a real, verified tool result — never the model's own summary
+- Closed a "confident-but-false" failure mode where the model narrated a successful send without ever calling the send tool, by making job success depend on a real, verified tool result — never the model's own summary; a later, more targeted recurrence of the same failure class (calling `chase_now` correctly, then narrating a send that never happened) was closed by embedding a plain-language `action_required` field directly in the tool's own response data, plus a new composite tool that collapsed a separate three-call sequence into one
+- Split one shared MCP server into two profile-scoped instances after measuring that the automation bot's 15-minute cron job was paying for a full 16-tool schema every run despite calling only 5 of them by name — a ~3x token overpay
 - Found and fixed a timezone bug that silently pushed every deadline eight hours off, breaking overdue detection for an entire working day
-- Migrated the task service off Kubernetes to plain Docker after concluding — honestly, against the instinct to keep it for portfolio value — that a single-node deployment gained nothing from it but LoadBalancer IP drift and tunnel deaths
+- Migrated the task service off Kubernetes to plain Docker, then to Docker Compose with tracked Alembic migrations, a non-root container user, and a real `/healthz` check — after concluding, honestly against the instinct to keep Kubernetes for portfolio value, that a single-node deployment gained nothing from it but LoadBalancer IP drift and tunnel deaths
 
 ## Documentation
 
@@ -117,6 +131,7 @@ A local ~35B model chaining several tool calls with judgment calls in between fa
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | System diagram, event-driven reply handling, data model, deployment history |
 | [`docs/MCP_TOOLS.md`](./docs/MCP_TOOLS.md) | Every MCP tool, its signature, and why it exists |
 | [`docs/AI_TOOLING.md`](./docs/AI_TOOLING.md) | The model, the agent runtime, MCP, skills-as-prompts, and every real reliability fix |
+| [`docs/MIGRATIONS.md`](./docs/MIGRATIONS.md) | Alembic setup, and the one-time step for adopting it onto an already-existing database |
 | [`PROJECT_MANAGEMENT.md`](./PROJECT_MANAGEMENT.md) | The complete build history — every decision and its reasoning, warts included |
 | [`hermes-config/README.md`](./hermes-config/README.md) | How the live bot instructions are version-controlled via symlinks |
 
