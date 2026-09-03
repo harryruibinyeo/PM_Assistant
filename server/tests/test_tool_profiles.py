@@ -14,25 +14,34 @@ from pmchaser.mcp.profiles import (
 )
 
 
-def test_pmchaser_bot_gets_exactly_the_five_tools_its_skill_actually_calls():
+def test_pmchaser_bot_gets_exactly_the_tools_its_skill_actually_calls_plus_the_composite():
     """Confirmed by grepping hermes-config/pmchaser-bot/task-chaser/SKILL.md
-    for every one of the 16 tool names - these five are the only ones
-    that appear at all."""
+    for every one of the (pre-Phase-3) 16 tool names - these five were the
+    only ones that appeared at all. record_reply_outcome is the Phase 3
+    composite tool (pmchaser/services/reply_outcomes.py) that replaces
+    step 3's update_task+ack+notify_manager triad - it doesn't appear in
+    SKILL.md by that grep (the file predates it), but SKILL.md step 3 was
+    updated in the same phase to call it instead."""
     assert set(PMCHASER_BOT_TOOLS) == {
         "get_chase_plan", "update_task", "telegram_send_message",
-        "resolve_unmatched", "notify_manager",
+        "resolve_unmatched", "notify_manager", "record_reply_outcome",
     }
 
 
-def test_task_manager_bot_gets_everything_except_get_chase_plan_and_notify_manager():
+def test_task_manager_bot_gets_everything_except_the_pmchaser_bot_only_tools():
     """Confirmed by grepping hermes-config/task-manager-bot/SOUL.md -
-    every other tool name appears at least 3 times; these two appear
+    every other tool name appears at least 3 times; these three appear
     zero times. get_chase_plan is pmchaser-bot's scheduled-sweep-only
     planning tool (task-manager-bot's manual equivalent is chase_now);
     notify_manager exists only so pmchaser-bot, which has no live
     conversation channel, can reach the manager through S.A.M.'s bot
-    identity - task-manager-bot IS that channel already."""
-    assert set(TASK_MANAGER_BOT_TOOLS) == set(ALL_TOOLS) - {"get_chase_plan", "notify_manager"}
+    identity - task-manager-bot IS that channel already; record_reply_outcome
+    replaces a 3-call pattern (update_task+ack+notify_manager) that SOUL.md's
+    own reply-handling rule (15) never performs in the first place - it
+    just answers the manager directly."""
+    assert set(TASK_MANAGER_BOT_TOOLS) == set(ALL_TOOLS) - {
+        "get_chase_plan", "notify_manager", "record_reply_outcome",
+    }
 
 
 def test_the_two_profiles_and_all_tools_are_internally_consistent():

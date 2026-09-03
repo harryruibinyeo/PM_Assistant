@@ -1,6 +1,11 @@
-"""Guards the single hardest constraint of this refactor: the 16 MCP tool
+"""Guards the single hardest constraint of this refactor: the MCP tool
 docstrings ARE the prompt the agent reasons from, and SOUL.md/SKILL.md
 reference tools by exact name, argument name, and return-key name.
+
+Tool count: 16 through Phase 2, 17 as of Phase 3's record_reply_outcome
+composite (see pmchaser/services/reply_outcomes.py) - registered for the
+pmchaser-bot profile only, still included here since this file covers
+the unset-profile ("all tools") default main.py falls back to.
 
 `tests/golden/tool_contract.json` was captured from the untouched, original
 tools.py on this branch (see the plan's Phase 0). This test asserts every
@@ -27,7 +32,7 @@ TOOL_NAMES = [
     "create_task", "create_tasks_bulk", "list_tasks", "update_task",
     "reassign_task", "delete_task", "register_person", "delete_person",
     "list_people", "telegram_send_message", "telegram_get_updates",
-    "resolve_unmatched", "notify_manager",
+    "resolve_unmatched", "notify_manager", "record_reply_outcome",
 ]
 
 
@@ -56,7 +61,7 @@ def _capture_contract(tools_mod) -> dict:
     return contract
 
 
-def test_all_16_tools_are_still_registered(fresh_db):
+def test_all_tools_are_still_registered(fresh_db):
     tools = fresh_db
     for name in TOOL_NAMES:
         assert hasattr(tools, name), f"tool {name!r} is missing from tools.py"
@@ -84,7 +89,7 @@ def test_tool_contract_is_byte_identical_to_the_golden_snapshot(fresh_db):
         )
 
 
-def test_mcp_endpoint_registers_all_16_tools_with_matching_names():
+def test_mcp_endpoint_registers_all_tools_with_matching_names():
     """Confirms main.py's default (PM_CHASER_TOOL_PROFILE unset) registers
     exactly the tool functions this contract snapshot covers - catches a
     tool being silently dropped from (or added to) the default,
@@ -94,13 +99,13 @@ def test_mcp_endpoint_registers_all_16_tools_with_matching_names():
     pmchaser.mcp.profiles.tools_for_profile(...) rather than one static
     mcp.add_tool(tools.xxx) call per tool - a per-tool AST scan of
     main.py's source (this test's original approach) can no longer see
-    16 individual calls to check, so this instead calls the actual
-    function that decides what gets registered. The equivalent guarantee
-    for the per-profile (non-default) case lives in
-    tests/test_mcp_contract.py, which boots real servers with
-    PM_CHASER_TOOL_PROFILE set and checks their live advertised schema -
-    a stronger check than parsing source, and the only way to verify a
-    profile's server actually serves what pmchaser/mcp/profiles.py claims.
+    individual calls to check, so this instead calls the actual function
+    that decides what gets registered. The equivalent guarantee for the
+    per-profile (non-default) case lives in tests/test_mcp_contract.py,
+    which boots real servers with PM_CHASER_TOOL_PROFILE set and checks
+    their live advertised schema - a stronger check than parsing source,
+    and the only way to verify a profile's server actually serves what
+    pmchaser/mcp/profiles.py claims.
     """
     from pmchaser.mcp.profiles import tools_for_profile
 
@@ -108,7 +113,7 @@ def test_mcp_endpoint_registers_all_16_tools_with_matching_names():
 
     assert registered == set(TOOL_NAMES), (
         f"tools_for_profile(None) returns {sorted(registered)}, which "
-        f"doesn't match the expected 16-tool contract {sorted(TOOL_NAMES)} "
+        f"doesn't match the expected tool contract {sorted(TOOL_NAMES)} "
         f"- main.py's default (no PM_CHASER_TOOL_PROFILE set) registers "
         f"exactly this set."
     )

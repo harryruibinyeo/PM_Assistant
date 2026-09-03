@@ -1,0 +1,21 @@
+Seeding 50 people / 200 tasks into a scratch DB...
+
+== Tool wall time + SQL query counts ==
+  list_tasks(filter=all)           8.90 ms      4 SQL statements
+  get_chase_plan()                 9.89 ms      8 SQL statements
+  get_digest_data()                8.21 ms      8 SQL statements
+  chase_now(one person)            2.43 ms      7 SQL statements
+
+== Tool-schema size per profile (docstring + signature chars, proxy for prompt tokens) ==
+   Caveat: not the real qwen3.6 tokenizer - char count / 4 is a rough,
+   commonly-used approximation. Directionally correct, not exact.
+   Second caveat, added once record_reply_outcome existed: this metric
+   only sees *static* schema size, not round-trip count. The composite
+   tool made pmchaser-bot's schema bigger (one more tool's docstring)
+   while making the common reply-handling case FASTER overall - it
+   replaces 3 separate full prompt prefill+decode cycles (update_task,
+   then an ack, then notify_manager) with 1. A bigger number here is
+   not automatically a regression; check round-trip count too.
+  pmchaser-bot (6 tools, post-Phase-3 split) ~  7446 chars  (~ 1861 tokens, approx.)
+  task-manager-bot (14 tools, post-Phase-3 split) ~ 11547 chars  (~ 2886 tokens, approx.)
+  unset profile / pre-Phase-3 default (all 17) ~ 17180 chars  (~ 4295 tokens, approx.)

@@ -31,17 +31,14 @@ from pathlib import Path
 
 import pytest
 
-from pmchaser.mcp.profiles import PMCHASER_BOT_TOOLS, TASK_MANAGER_BOT_TOOLS
+from pmchaser.mcp.profiles import ALL_TOOLS, PMCHASER_BOT_TOOLS, TASK_MANAGER_BOT_TOOLS
 
 SERVER_ROOT = Path(__file__).parent.parent
 
-EXPECTED_TOOLS = {
-    "get_chase_plan", "chase_now", "get_digest_data",
-    "create_task", "create_tasks_bulk", "list_tasks", "update_task",
-    "reassign_task", "delete_task", "register_person", "delete_person",
-    "list_people", "telegram_send_message", "telegram_get_updates",
-    "resolve_unmatched", "notify_manager",
-}
+# Sourced from the real profiles module (not a hand-maintained duplicate
+# list) specifically because this file already got bitten once by drift
+# risk here - see the Phase 3 per-profile milestone commit.
+EXPECTED_TOOLS = set(ALL_TOOLS)
 
 
 def _free_port() -> int:
@@ -146,7 +143,7 @@ async def _list_tools(url: str):
             return result.tools
 
 
-def test_live_server_advertises_exactly_the_16_expected_tools(running_server):
+def test_live_server_advertises_exactly_the_expected_tools(running_server):
     tools = asyncio.run(_list_tools(running_server))
     names = {t.name for t in tools}
     assert names == EXPECTED_TOOLS, (

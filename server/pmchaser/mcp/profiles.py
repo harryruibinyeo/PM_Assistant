@@ -25,7 +25,7 @@ ALL_TOOLS: tuple[str, ...] = (
     "create_task", "create_tasks_bulk", "list_tasks", "update_task",
     "reassign_task", "delete_task", "register_person", "delete_person",
     "list_people", "telegram_send_message", "telegram_get_updates",
-    "resolve_unmatched", "notify_manager",
+    "resolve_unmatched", "notify_manager", "record_reply_outcome",
 )
 
 # pmchaser-bot: the automated 15-minute chase sweep + instant-reply
@@ -38,6 +38,10 @@ PMCHASER_BOT_TOOLS: tuple[str, ...] = (
     "telegram_send_message",
     "resolve_unmatched",
     "notify_manager",
+    # Phase 3 composite tool: collapses the update_task + ack + notify_manager
+    # triad step 3 of task-chaser SKILL.md always performs together for a
+    # real status update into one call. See pmchaser/services/reply_outcomes.py.
+    "record_reply_outcome",
 )
 
 # task-manager-bot: the manager's live conversational assistant, S.A.M.
@@ -48,8 +52,14 @@ PMCHASER_BOT_TOOLS: tuple[str, ...] = (
 #     conversation channel, can reach the manager through S.A.M.'s bot
 #     identity. task-manager-bot IS that channel already; it has no
 #     reason to message itself.
+#   - record_reply_outcome: SOUL.md rule 15's own reply-handling flow
+#     never sends an owner acknowledgment or a manager notification for
+#     an interpreted reply in the first place (the manager IS the one
+#     asking, and gets a direct answer instead) - this profile has no
+#     use for the composite that exists to replace that pattern.
 TASK_MANAGER_BOT_TOOLS: tuple[str, ...] = tuple(
-    name for name in ALL_TOOLS if name not in ("get_chase_plan", "notify_manager")
+    name for name in ALL_TOOLS
+    if name not in ("get_chase_plan", "notify_manager", "record_reply_outcome")
 )
 
 PROFILES: dict[str, tuple[str, ...]] = {

@@ -273,6 +273,13 @@ def main() -> None:
     print("\n== Tool-schema size per profile (docstring + signature chars, proxy for prompt tokens) ==")
     print("   Caveat: not the real qwen3.6 tokenizer - char count / 4 is a rough,")
     print("   commonly-used approximation. Directionally correct, not exact.")
+    print("   Second caveat, added once record_reply_outcome existed: this metric")
+    print("   only sees *static* schema size, not round-trip count. The composite")
+    print("   tool made pmchaser-bot's schema bigger (one more tool's docstring)")
+    print("   while making the common reply-handling case FASTER overall - it")
+    print("   replaces 3 separate full prompt prefill+decode cycles (update_task,")
+    print("   then an ack, then notify_manager) with 1. A bigger number here is")
+    print("   not automatically a regression; check round-trip count too.")
     for profile, chars in tool_schema_char_counts(tools).items():
         print(f"  {profile:<42} ~{chars:6d} chars  (~{chars // 4:5d} tokens, approx.)")
 

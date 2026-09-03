@@ -185,6 +185,42 @@
     ],
     "return_annotation": "dict"
   },
+  "record_reply_outcome": {
+    "docstring": "Update a task from an interpreted reply, acknowledge the owner, and\nnotify the manager, in one call — collapsing the three separate calls\n(update_task, then telegram_send_message for the acknowledgment, then\nnotify_manager) a real status update from a reply always requires\ninto one.\n\nOnly call this when the reply genuinely was a status update. If it\nwas not, don't call this at all — leave the task alone, same as\nbefore this tool existed. Don't call update_task/telegram_send_message/\nnotify_manager separately for the same reply instead of this — those\nthree tools still exist and are unchanged, but for this specific\nsituation (recording what a reply meant, acknowledging the owner, and\ntelling the manager) this one call does all three reliably, in the\nright order, every time.\n\nArgs:\n    task_id: The task the reply was about.\n    ack_text: A brief acknowledgment sent back to the task's owner —\n        no more than one short line (\"Got it, marked as done — nice\n        work.\" / \"Thanks — flagging that for Marcus to review, he'll\n        follow up on the new deadline.\"). This is the only signal the\n        owner ever gets that their reply was actually read. Never\n        reference a task_id here — this is not a chase, and doing so\n        would create a new open check-in nobody is waiting on.\n    manager_note: A short line naming who replied, on which task, and\n        what changed (\"Daniel marked 'Submit vendor report' done.\" /\n        \"Priya's 'Clean up room' is now blocked — she said she's\n        waiting on the key.\") — not a raw status dump.\n    status: \"not_started\", \"in_progress\", \"blocked\", \"done\", or\n        \"cancelled\" — same values as update_task. If the reply asks\n        for more time or a later deadline, never pass a status other\n        than \"blocked\" here — the owner cannot grant themselves an\n        extension; only the manager can, via a separate update_task\n        call with a new deadline.\n    progress_pct: 0-100, same as update_task.\n\nReturns:\n    task: the updated task (update_task's own return shape) — or, if\n        task_id was invalid, just this key with the error, and\n        neither the acknowledgment nor the manager notification is\n        attempted.\n    ack: telegram_send_message's real return value for the\n        acknowledgment — check for a real checkin_id/telegram_message_id\n        before treating it as sent, same proof-of-send discipline as\n        every other send in this system.\n    manager_notification: notify_manager's real return value.",
+    "params": [
+      {
+        "annotation": "int",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "task_id"
+      },
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ack_text"
+      },
+      {
+        "annotation": "str",
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "manager_note"
+      },
+      {
+        "annotation": "str | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "status"
+      },
+      {
+        "annotation": "int | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "progress_pct"
+      }
+    ],
+    "return_annotation": "dict"
+  },
   "register_person": {
     "docstring": "Register a person (team member or manager) and get their linking code.\n\nThe person must send `/start <link_code>` to the bot from their own\nTelegram account to complete linking — only then can they be messaged.\n\nArgs:\n    name: The person's name.\n    telegram_username: Their @username, for reference only (not required\n        for linking to work).\n    role: \"team_member\" or \"manager\".",
     "params": [
