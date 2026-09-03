@@ -1,0 +1,69 @@
+# Phase 4: replaces the manual `docker run -d --name pm-chaser-mcp
+# --restart=always -p 18173:8000 -v pm-chaser-data:/data --env-file
+# server/.env pm-chaser-mcp:local` command documented in
+# PROJECT_MANAGEMENT.md's 2026-08-14 Kubernetes-to-Docker migration entry
+# with one checked-in, reproducible definition - same image, same port,
+# same database. Nothing about how the service actually runs changes.
+#
+# One service, not two: this branch (refactor/operations, off
+# refactor/production-grade) doesn't carry Phase 3's per-profile tool
+# split (pmchaser/mcp/profiles.py, PM_CHASER_TOOL_PROFILE) - that lives on
+# refactor/agent-prompts and is a separate, hermes-config-touching branch.
+# A single instance here still serves all 16 tools to both Hermes
+# profiles, exactly as production does today. If/when that branch's split
+# is adopted here too, this file gains a second `task-manager-bot` service
+# on its own port (:18174) alongside this one - see BRANCH_TESTING.md for
+# what that would look like.
+#
+# `pm-chaser-data` is declared `external: true` below deliberately - it is
+# the SAME named volume the live deployment already writes to. Without
+# `external: true`, Compose would create and use a differently-namespaced
+# volume (e.g. `pm_chaser_pm-chaser-data`), silently starting the real bot
+# against a fresh, empty database instead of adopting the one with every
+# real task and person already in it.
+#
+# Security (finding #4, partial fix): the port is published to 127.0.0.1
+# only, not 0.0.0.0 - every real consumer (Hermes's MCP client,
+# listener/chase_listener.py's peek loop) already runs on this same Mac
+# and reaches it via `localhost`, so this closes LAN/internet reachability
+# with no change needed on either consumer. This is NOT the same as
+# authentication - it's the network-level half of the same finding,
+# shippable independently and with zero hermes-config risk. See
+# server/main.py's PM_CHASER_MCP_TOKEN support for the bearer-token layer
+# on top, and BRANCH_TESTING.md for how to opt into it.
+#
+# Usage:
+#   docker compose build
+#   docker compose up -d
+#   docker compose logs -f
+#   docker compose down          # container only - the named volume
+#                                 # (declared external) is never touched
+#                                 # by compose down, with or without -v,
+#                                 # since Compose doesn't own external
+#                                 # volumes' lifecycle.
+
+services:
+  pm-chaser-mcp:
+    build: ./server
+    image: pm-chaser-mcp:local
+    container_name: pm-chaser-mcp
+    restart: always
+    env_file:
+      - server/.env
+    environment:
+      PM_CHASER_PORT: "8000"
+      PM_CHASER_DB_PATH: /data/pm_chaser.db
+    ports:
+      - "127.0.0.1:18173:8000"
+    volumes:
+      - pm-chaser-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  pm-chaser-data:
+    external: true

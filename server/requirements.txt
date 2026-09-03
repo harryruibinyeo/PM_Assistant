@@ -9,6 +9,7 @@ mcp==2.1.1
 sqlalchemy==2.0.52
 httpx2==2.12.0
 python-dotenv==1.2.3
+alembic==1.19.1
 
 # Windows has no built-in IANA timezone database (macOS/Linux do) - models.py
 # uses zoneinfo.ZoneInfo(PM_CHASER_TZ) at import time, which raises

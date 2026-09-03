@@ -8,43 +8,56 @@ irreversible to a tool that's in real daily use.
 
 ## What this branch is
 
-Two branches carry this refactor of pm-chaser's `server/` code - the MCP
-tool service both Hermes bot profiles (`task-manager-bot`, `pmchaser-bot`)
-talk to - and this file lives on both:
+`refactor/production-grade` is a production-hardening refactor of
+pm-chaser's `server/` code - the MCP tool service both Hermes bot
+profiles (`task-manager-bot`, `pmchaser-bot`) talk to. Every commit
+message is a full writeup of what changed and why (`git log` to read
+them). This file is the *operational* summary: what to actually do on
+this machine.
 
-- `refactor/production-grade` - `server/` code only. Phases 0-2: the
-  safety-net tests, the `tools.py`→`pmchaser/` package split, N+1/index/
-  logging fixes and 5 flagged bug fixes - all behavior-identical or
-  narrowly-scoped, verified by an automated golden-master snapshot that
-  diffs every tool's exact output against the pre-refactor original.
-  `hermes-config/` is untouched here.
-- `refactor/agent-prompts` (branches off the one above) - Phase 3, the
-  agent-loop latency work: per-profile tool exposure, trimmed docstrings,
-  new composite tools. This phase **does** touch `hermes-config/` -
-  it's the one this file's higher-risk procedure exists for.
+**As of the merge that added this paragraph, this branch now contains
+everything through Phase 4**, folded in from two branches that used to be
+separate:
+- Phase 3 (`refactor/agent-prompts`, merged in) - agent-loop latency
+  work: per-profile MCP tool exposure, the `action_required` reliability
+  fix, the `record_reply_outcome` composite tool. **This is the part that
+  touches `hermes-config/`.**
+- Phase 4 (`refactor/operations`, merged in) - Alembic migrations,
+  `/healthz` + Docker `HEALTHCHECK`, a non-root container user,
+  `docker-compose.yml`, an optional bearer-token gate (off by default),
+  and `backup.sh`. Server/ops only, no `hermes-config/` changes of its
+  own. See "Phase 4 operational notes" near the end of this file.
 
-Every commit message on both branches is a full writeup of what changed
-and why (`git log` to read them). This file is the *operational*
-summary: what to actually do on this machine.
+**This means checking out `refactor/production-grade` from here on is no
+longer the "safe, server-only" case it used to be** - `hermes-config/`
+now differs from `main` unconditionally on this branch, because Phase 3
+is folded into it. Run the Status check below to confirm this for
+yourself rather than trusting this paragraph blindly (branches move; this
+file might lag a push) - but expect it to come back non-empty, and expect
+to need **Procedure B**, not A, for the `hermes-config/` half of what's
+here. Both source branches (`refactor/agent-prompts`, `refactor/operations`)
+still exist on their own too, unchanged, if you ever need to test just
+one half in isolation.
 
 ## Status as of this file (check before trusting the rest of this doc)
 
-Run this first - it tells you which procedure below applies, regardless
-of which of the two branches above you were told to test:
+Run this first - it tells you which procedure below applies:
 
 ```bash
 git -C <path-to-your-pm-chaser-clone> diff main -- hermes-config/
 ```
 
-- **Empty output** → only `server/` code has changed so far (you're on
-  `refactor/production-grade`, or an early point on `refactor/agent-prompts`
-  before its hermes-config commit). Checking out the branch has **zero
-  effect on live bot behavior** by itself - only rebuilding and
-  restarting the Docker container makes the server changes take effect
-  at all. Use **Procedure A**.
-- **Non-empty output** → `refactor/agent-prompts`' per-profile tool
-  exposure (and whatever else Phase 3 has added since) has landed.
-  **This is a different, higher-risk situation - use Procedure B, not A.**
+- **Empty output** → only `server/` code has changed so far. Checking out
+  the branch has **zero effect on live bot behavior** by itself - only
+  rebuilding and restarting the Docker container makes the server changes
+  take effect at all. Use **Procedure A**. (This would mean the Phase 3
+  merge described above hasn't actually landed in what you're looking at -
+  double check you're on the commit you think you are.)
+- **Non-empty output** → the expected case as of this merge - Phase 3's
+  per-profile tool exposure has landed. **Use Procedure B, not A**, for
+  the hermes-config-touching half; Procedure A's steps still apply first
+  regardless (get the server running safely on a scratch DB before
+  touching Hermes at all).
 
 If this section's instructions ever contradict what `git log` and `git
 diff` actually show, trust the live repository state over this file - it
@@ -212,6 +225,67 @@ copy ready), *then*:
    gateway restart again; make sure the single production Docker
    container is running (it was never stopped by this procedure, but
    confirm).
+
+## Phase 4 operational notes (originally `refactor/operations`, now merged in)
+
+These additions are independent of Phase 3's hermes-config changes above -
+none of them touch `hermes-config/` on their own. Procedure A's steps
+apply as written for this part, with a few additions specific to it:
+
+- **Alembic (one-time step, real DB only).** This branch adds tracked
+  migrations. The live database already has every table by hand
+  (`init_db()`'s `create_all()`), so before running any `alembic` command
+  against the **real** `pm_chaser.db`, run `alembic stamp head` (never
+  `upgrade head` - it will fail with "table already exists", loudly and
+  safely, no partial writes). Full explanation and the ongoing workflow
+  for a real schema change: `docs/MIGRATIONS.md`. Not needed at all for
+  Procedure A's scratch-DB testing - a fresh scratch DB has no history to
+  reconcile, `alembic upgrade head` just works on it directly.
+- **`docker-compose.yml` exists now**, matching the real `docker run
+  --restart=always` command exactly (same image, same port `18173`, same
+  named volume `pm-chaser-data`) plus a Docker `HEALTHCHECK` and
+  loopback-only port publishing. It's the eventual replacement for the
+  manual command, not required reading for scratch-DB testing (Procedure
+  A's manual `docker run` for the *test* container is still correct - a
+  compose file for a one-off test container would be more ceremony than
+  the task needs). Cutting the **real** deployment over to it is a
+  separate decision to make explicitly with the user, not an automatic
+  side effect of testing this branch - it means adopting the existing
+  `pm-chaser-data` volume, which `docker-compose.yml`'s `external: true`
+  declaration is what makes safe.
+- **Non-root container user.** The rebuilt image now runs the app as a
+  non-root `app` user (`server/entrypoint.py` chowns `/data` at container
+  start before dropping from root). This was reasoned through carefully
+  but **only verified with a real `docker build`/`docker run` on this
+  Mac, not on the Windows machine this branch was developed on** (no
+  Docker available there) - watch `docker logs` on first boot against
+  both a brand-new scratch volume and (later, if the real deployment ever
+  adopts this image) the existing `pm-chaser-data` volume specifically;
+  a `PermissionError` writing to `/data` would mean the chown step didn't
+  do what it was reasoned to do.
+- **`/healthz`** (no auth, no token needed) - `curl http://localhost:<port>/healthz`
+  should return `{"status":"ok"}` with a 200 once the container is up;
+  useful as a first sanity check before going further.
+- **`PM_CHASER_MCP_TOKEN` is unset by default** - nothing about auth
+  changes unless you explicitly set it. If you do want to test it: set it
+  in the test container's env, then confirm `/internal/peek` returns 401
+  with no `Authorization` header and passes through with the right
+  `Bearer <token>` one, while `/healthz` stays open either way. Turning
+  this on for the **real** deployment additionally means adding
+  `headers: Authorization: "Bearer ${PM_CHASER_MCP_TOKEN}"` to
+  `mcp_servers.pm-chaser` in **both** `hermes-config/*/config.yaml` files
+  and the matching value to `~/.hermes/.env` - that part *is* a
+  hermes-config change (Procedure B territory) even though this branch
+  itself carries none; don't do it without confirming with the user
+  first, same as any other hermes-config edit.
+- **`backup.sh`** (repo root) - `./backup.sh [dest-dir]` takes a real,
+  WAL-safe backup of the live `pm-chaser-data` volume into a timestamped
+  file, without touching the running container. Verified correct against
+  a real WAL-mode scratch database (the underlying `sqlite3.Connection.backup()`
+  call); the `docker run`/volume-mounting wrapper around it has **not**
+  been run for real yet (no Docker on the machine this was written on) -
+  worth a dry run against a scratch volume before trusting it for a real
+  backup.
 
 ## Where to find more context
 

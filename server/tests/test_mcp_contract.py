@@ -132,6 +132,98 @@ def task_manager_bot_server():
         yield url
 
 
+@contextmanager
+def _running_server_with_token(token: str):
+    """Same as the `running_server` fixture, but with PM_CHASER_MCP_TOKEN
+    set - a plain contextmanager (not a fixture) since only one test needs
+    a token-armed server and every other test needs it absent, matching
+    today's default deployment."""
+    port = _free_port()
+    db_path = Path(tempfile.gettempdir()) / f"pm_chaser_mcp_contract_{uuid.uuid4().hex}.db"
+
+    env = dict(os.environ)
+    env["PM_CHASER_DB_PATH"] = str(db_path)
+    env["PM_CHASER_HOST"] = "127.0.0.1"
+    env["PM_CHASER_PORT"] = str(port)
+    env["PM_CHASER_TZ"] = "Asia/Singapore"
+    env["PM_CHASER_MCP_TOKEN"] = token
+    env.pop("TELEGRAM_BOT_TOKEN", None)
+    env.pop("TASK_MANAGER_BOT_TOKEN", None)
+
+    proc = subprocess.Popen(
+        [sys.executable, "main.py"],
+        cwd=str(SERVER_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        _wait_until_accepting("127.0.0.1", port)
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            p = Path(str(db_path) + suffix)
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError:
+                pass
+
+
+def test_bearer_auth_gates_peek_but_exempts_healthz_when_token_configured():
+    """PM_CHASER_MCP_TOKEN (pmchaser/mcp/auth.py) is off by default - every
+    other test in this file boots with it unset and expects open access,
+    matching today's real deployment. This is the one test proving the
+    opt-in gate actually works when it IS configured: /internal/peek
+    requires the exact bearer token, /healthz never does (Docker's own
+    HEALTHCHECK sends no Authorization header at all)."""
+    import urllib.error
+    import urllib.request
+
+    token = "test-bearer-token-do-not-use-in-prod"
+
+    with _running_server_with_token(token) as base_url:
+        with urllib.request.urlopen(f"{base_url}/healthz", timeout=15) as resp:
+            assert resp.status == 200
+
+        peek_url = f"{base_url}/internal/peek?timeout=1"
+
+        try:
+            urllib.request.urlopen(peek_url, timeout=15)
+            raised = False
+        except urllib.error.HTTPError as exc:
+            raised = True
+            no_token_status = exc.code
+        assert raised and no_token_status == 401
+
+        req = urllib.request.Request(peek_url, headers={"Authorization": "Bearer wrong-token"})
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            raised = False
+        except urllib.error.HTTPError as exc:
+            raised = True
+            wrong_token_status = exc.code
+        assert raised and wrong_token_status == 401
+
+        req = urllib.request.Request(peek_url, headers={"Authorization": f"Bearer {token}"})
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            correct_token_status = 200
+        except urllib.error.HTTPError as exc:
+            # 503 (TelegramNotConfigured, no token in this test's env) is
+            # fine here - what matters is it got PAST the auth gate, not
+            # what peek_for_new_replies itself returns.
+            correct_token_status = exc.code
+        assert correct_token_status == 503
+
+
 async def _list_tools(url: str):
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
@@ -198,6 +290,25 @@ def test_a_real_mcp_client_can_round_trip_create_and_list(running_server):
     same assertion server/test_wire.py made manually."""
     tasks = asyncio.run(_round_trip(running_server))
     assert any(t["title"] == "Wire protocol test task" for t in tasks)
+
+
+@pytest.mark.parametrize("tool_profile", [None, "pmchaser-bot", "task-manager-bot"])
+def test_healthz_is_reachable_and_ok_on_every_profile(tool_profile):
+    """Phase 4 addition: main.py's /healthz route (Docker HEALTHCHECK / a
+    future orchestrator's liveness probe), proving its own DB connection
+    actually works - not just that the HTTP server is accepting
+    connections. Unlike /internal/peek, registered on every profile:
+    every instance owns the same responsibility."""
+    import urllib.request
+
+    with _running_server(tool_profile=tool_profile) as url:
+        healthz_url = url.replace("/mcp", "/healthz")
+        with urllib.request.urlopen(healthz_url, timeout=15) as resp:
+            status = resp.status
+            body = json.loads(resp.read())
+
+    assert status == 200
+    assert body == {"status": "ok"}
 
 
 def test_pmchaser_bot_profile_server_advertises_only_its_5_tools(pmchaser_bot_server):
