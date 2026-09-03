@@ -52,6 +52,7 @@ from pmchaser.services.notifications import notify_manager as _notify_manager
 from pmchaser.services.people import delete_person as _delete_person
 from pmchaser.services.people import list_people as _list_people
 from pmchaser.services.people import register_person as _register_person
+from pmchaser.services.reply_outcomes import record_reply_outcome as _record_reply_outcome
 from pmchaser.services.tasks import create_task as _create_task
 from pmchaser.services.tasks import create_tasks_bulk as _create_tasks_bulk
 from pmchaser.services.tasks import delete_task as _delete_task
@@ -64,8 +65,8 @@ __all__ = [
     "create_task", "create_tasks_bulk", "list_tasks", "update_task",
     "reassign_task", "delete_task", "register_person", "delete_person",
     "list_people", "telegram_send_message", "telegram_get_updates",
-    "resolve_unmatched", "notify_manager", "peek_for_new_replies",
-    "TelegramNotConfigured",
+    "resolve_unmatched", "notify_manager", "record_reply_outcome",
+    "peek_for_new_replies", "TelegramNotConfigured",
 ]
 
 
@@ -377,6 +378,12 @@ def get_chase_plan(
             link codes. Not their fault and never an ignored ping.
         skipped: filtered out this run, each with a reason.
         manager_name: who to send escalations to.
+        action_required: present only when to_chase or to_escalate is
+            non-empty. States plainly that nothing has been sent or
+            escalated yet and exactly which tool call each entry still
+            needs. Never report a task as chased or escalated without
+            that call actually returning first — a real ID from its
+            result is what backs up a confirmation, not this field.
 
     Args:
         due_soon_hours: How far ahead counts as "due soon".
@@ -424,6 +431,13 @@ def chase_now(owner_name: str) -> dict:
     not just this owner. Handle those the same way get_chase_plan's caller
     does (interpret and call update_task, or resolve_unmatched) before
     sending the new chase message — they are not picked up again later.
+
+    When `tasks` is non-empty, the response also carries an
+    `action_required` field stating plainly that nothing has been sent
+    yet and exactly which telegram_send_message call to make. Never
+    report a message as sent without that call actually returning a real
+    checkin_id/telegram_message_id first — describing what you're about
+    to send is not the same as sending it.
 
     Args:
         owner_name: The person to chase. Must already be registered — never
@@ -497,6 +511,70 @@ def notify_manager(text: str) -> dict:
             changed — not a raw status dump.
     """
     return log_tool_call("notify_manager", _notify_manager, text)
+
+
+# ---------------------------------------------------------------------------
+# 17. record_reply_outcome (Phase 3 composite tool - pmchaser-bot only,
+# not registered for task-manager-bot - see pmchaser/mcp/profiles.py)
+# ---------------------------------------------------------------------------
+def record_reply_outcome(
+    task_id: int,
+    ack_text: str,
+    manager_note: str,
+    status: str | None = None,
+    progress_pct: int | None = None,
+) -> dict:
+    """Update a task from an interpreted reply, acknowledge the owner, and
+    notify the manager, in one call — collapsing the three separate calls
+    (update_task, then telegram_send_message for the acknowledgment, then
+    notify_manager) a real status update from a reply always requires
+    into one.
+
+    Only call this when the reply genuinely was a status update. If it
+    was not, don't call this at all — leave the task alone, same as
+    before this tool existed. Don't call update_task/telegram_send_message/
+    notify_manager separately for the same reply instead of this — those
+    three tools still exist and are unchanged, but for this specific
+    situation (recording what a reply meant, acknowledging the owner, and
+    telling the manager) this one call does all three reliably, in the
+    right order, every time.
+
+    Args:
+        task_id: The task the reply was about.
+        ack_text: A brief acknowledgment sent back to the task's owner —
+            no more than one short line ("Got it, marked as done — nice
+            work." / "Thanks — flagging that for Marcus to review, he'll
+            follow up on the new deadline."). This is the only signal the
+            owner ever gets that their reply was actually read. Never
+            reference a task_id here — this is not a chase, and doing so
+            would create a new open check-in nobody is waiting on.
+        manager_note: A short line naming who replied, on which task, and
+            what changed ("Daniel marked 'Submit vendor report' done." /
+            "Priya's 'Clean up room' is now blocked — she said she's
+            waiting on the key.") — not a raw status dump.
+        status: "not_started", "in_progress", "blocked", "done", or
+            "cancelled" — same values as update_task. If the reply asks
+            for more time or a later deadline, never pass a status other
+            than "blocked" here — the owner cannot grant themselves an
+            extension; only the manager can, via a separate update_task
+            call with a new deadline.
+        progress_pct: 0-100, same as update_task.
+
+    Returns:
+        task: the updated task (update_task's own return shape) — or, if
+            task_id was invalid, just this key with the error, and
+            neither the acknowledgment nor the manager notification is
+            attempted.
+        ack: telegram_send_message's real return value for the
+            acknowledgment — check for a real checkin_id/telegram_message_id
+            before treating it as sent, same proof-of-send discipline as
+            every other send in this system.
+        manager_notification: notify_manager's real return value.
+    """
+    return log_tool_call(
+        "record_reply_outcome", _record_reply_outcome,
+        task_id, ack_text, manager_note, status=status, progress_pct=progress_pct,
+    )
 
 
 # ---------------------------------------------------------------------------

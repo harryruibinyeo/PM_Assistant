@@ -66,7 +66,7 @@ def normalize_for_comparison(value):
 
 
 def run_scenario(tools, fake_telegram, fake_manager_send: list[dict]) -> dict:
-    """Exercises every one of the 16 tools at least once, in a fixed order,
+    """Exercises every one of the 17 tools at least once, in a fixed order,
     against a fixed scenario. Returns an ordered dict of
     {step_label: tool_return_value} suitable for JSON snapshotting.
 
@@ -134,6 +134,20 @@ def run_scenario(tools, fake_telegram, fake_manager_send: list[dict]) -> dict:
         )
 
     out["update_task_to_blocked"] = tools.update_task(task_id, status="blocked")
+
+    # A separate task+reply so record_reply_outcome's three-in-one
+    # (update_task + ack + notify_manager) has something real to act on,
+    # without touching the already-tuned narrative above.
+    out["create_task_for_reply_outcome"] = tools.create_task(
+        "Submit vendor report", "Alice", "medium", deadline="2026-08-20T09:00:00",
+    )
+    out["record_reply_outcome"] = tools.record_reply_outcome(
+        out["create_task_for_reply_outcome"]["task_id"],
+        ack_text="Got it, marked as done - nice work.",
+        manager_note="Alice marked 'Submit vendor report' done.",
+        status="done",
+        progress_pct=100,
+    )
 
     out["get_digest_data"] = tools.get_digest_data()
 

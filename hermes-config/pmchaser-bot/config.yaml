@@ -9,6 +9,16 @@ memory:
 skills:
   creation_nudge_interval: 0
 _config_version: 33
+# Phase 3 (refactor/agent-prompts): pm-chaser now runs as two separate
+# server instances from the same image/database, each advertising only
+# the tools this profile's own task-chaser SKILL.md actually calls by
+# name (confirmed by grepping it - exactly 5 of the 16 tools). This
+# profile's instance is started with PM_CHASER_TOOL_PROFILE=pmchaser-bot;
+# the port stays :18173, unchanged from before this split, since
+# listener/chase_listener.py's PEEK_URL is hardcoded to it - only
+# task-manager-bot's instance moved to a new port (:18174). See
+# server/pmchaser/mcp/profiles.py for the exact tool list and
+# BRANCH_TESTING.md for how to run both instances together.
 mcp_servers:
   pm-chaser:
     url: http://localhost:18173/mcp

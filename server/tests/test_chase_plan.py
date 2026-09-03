@@ -180,3 +180,49 @@ def test_blocked_task_is_not_chased(fresh_db, fake_telegram):
     assert plan["to_chase"] == []
     reasons = [s["reason"] for s in plan["skipped"] if s["task_id"] == task_id]
     assert reasons and "manager" in reasons[0]
+
+
+def test_plan_with_to_chase_carries_an_action_required_reminder(fresh_db, fake_telegram):
+    """Same regression coverage as chase_now's action_required test, for
+    the scheduled-sweep path: nothing has actually been sent for a
+    to_chase entry until telegram_send_message is called - the reminder
+    must say so and name the tool."""
+    tools = fresh_db
+    tools.register_person("Bob", role="manager")
+    link(tools, fake_telegram, "Alice", "555001")
+    tools.create_task("Task", "Alice", "high", deadline=local_iso(-timedelta(hours=2)))
+
+    plan = tools.get_chase_plan()
+
+    assert plan["to_chase"]  # sanity: this test's premise actually holds
+    assert "action_required" in plan
+    assert "telegram_send_message" in plan["action_required"]
+
+
+def test_plan_with_to_escalate_carries_an_action_required_reminder(fresh_db, fake_telegram):
+    tools = fresh_db
+    tools.register_person("Bob", role="manager")
+    link(tools, fake_telegram, "Alice", "555001")
+    task_id = tools.create_task(
+        "Task", "Alice", "high", deadline=local_iso(-timedelta(hours=10))
+    )["task_id"]
+    for _ in range(3):
+        tools.telegram_send_message("Alice", "checking in", task_id=task_id)
+        backdate_last_checkin(task_id, hours_ago=2)
+
+    plan = tools.get_chase_plan(max_unanswered=3)
+
+    assert plan["to_escalate"]  # sanity: this test's premise actually holds
+    assert "action_required" in plan
+    assert "notify_manager" in plan["action_required"]
+
+
+def test_plan_with_nothing_to_chase_or_escalate_has_no_action_required(fresh_db, fake_telegram):
+    tools = fresh_db
+    tools.register_person("Bob", role="manager")
+
+    plan = tools.get_chase_plan()
+
+    assert plan["to_chase"] == []
+    assert plan["to_escalate"] == []
+    assert "action_required" not in plan

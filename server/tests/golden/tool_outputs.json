@@ -1,5 +1,6 @@
 {
   "chase_now_alice": {
+    "action_required": "Nothing has been sent to Alice yet. Write ONE message covering all 3 task(s) in `tasks` above, then call telegram_send_message(owner_name='Alice', text=<your message>, task_id=1) - the most urgent task's id. Only tell the manager a message was sent after that call actually returns a real checkin_id/telegram_message_id; do not confirm before calling it.",
     "newly_linked": [],
     "owner_name": "Alice",
     "reachable": true,
@@ -59,6 +60,28 @@
         "unmatched_id": 1
       }
     ]
+  },
+  "create_task_for_reply_outcome": {
+    "deadline_local": "2026-08-20T09:00:00+08:00",
+    "deadline_utc": "2026-08-20T01:00:00Z",
+    "description": null,
+    "hours_since_last_checkin": null,
+    "hours_until_deadline": 141.0,
+    "last_checkin_answered": null,
+    "last_checkin_sent_at_local": null,
+    "last_reply_at_local": null,
+    "last_reply_text": null,
+    "manager_name": "Bob",
+    "owner_is_linked": true,
+    "owner_name": "Alice",
+    "priority": "medium",
+    "progress_pct": 0,
+    "status": "not_started",
+    "task_id": 5,
+    "title": "Submit vendor report",
+    "total_checkins": 0,
+    "unanswered_checkin_count": 0,
+    "updated_at_local": "2026-08-14T12:00:00+08:00"
   },
   "create_task_low_far_future": {
     "deadline_local": "2026-09-15T09:00:00+08:00",
@@ -493,6 +516,28 @@
       "total_checkins": 0,
       "unanswered_checkin_count": 0,
       "updated_at_local": "2026-08-14T12:00:00+08:00"
+    },
+    {
+      "deadline_local": "2026-08-20T09:00:00+08:00",
+      "deadline_utc": "2026-08-20T01:00:00Z",
+      "description": null,
+      "hours_since_last_checkin": null,
+      "hours_until_deadline": 141.0,
+      "last_checkin_answered": null,
+      "last_checkin_sent_at_local": null,
+      "last_reply_at_local": null,
+      "last_reply_text": null,
+      "manager_name": "Bob",
+      "owner_is_linked": true,
+      "owner_name": "Alice",
+      "priority": "medium",
+      "progress_pct": 100,
+      "status": "done",
+      "task_id": 5,
+      "title": "Submit vendor report",
+      "total_checkins": 0,
+      "unanswered_checkin_count": 0,
+      "updated_at_local": "2026-08-14T12:00:00+08:00"
     }
   ],
   "notify_manager": {
@@ -501,6 +546,10 @@
     "to": "Bob"
   },
   "notify_manager_fake_sent": [
+    {
+      "chat_id": "700001",
+      "text": "Alice marked 'Submit vendor report' done."
+    },
     {
       "chat_id": "700001",
       "text": "Golden-master scenario check-in."
@@ -528,6 +577,42 @@
     "total_checkins": 1,
     "unanswered_checkin_count": 1,
     "updated_at_local": "2026-08-14T12:00:00+08:00"
+  },
+  "record_reply_outcome": {
+    "ack": {
+      "checkin_id": null,
+      "sent": true,
+      "task_id": null,
+      "telegram_message_id": 103,
+      "to": "Alice"
+    },
+    "manager_notification": {
+      "sent": true,
+      "telegram_message_id": 9001,
+      "to": "Bob"
+    },
+    "task": {
+      "deadline_local": "2026-08-20T09:00:00+08:00",
+      "deadline_utc": "2026-08-20T01:00:00Z",
+      "description": null,
+      "hours_since_last_checkin": null,
+      "hours_until_deadline": 141.0,
+      "last_checkin_answered": null,
+      "last_checkin_sent_at_local": null,
+      "last_reply_at_local": null,
+      "last_reply_text": null,
+      "manager_name": "Bob",
+      "owner_is_linked": true,
+      "owner_name": "Alice",
+      "priority": "medium",
+      "progress_pct": 100,
+      "status": "done",
+      "task_id": 5,
+      "title": "Submit vendor report",
+      "total_checkins": 0,
+      "unanswered_checkin_count": 0,
+      "updated_at_local": "2026-08-14T12:00:00+08:00"
+    }
   },
   "register_alice": {
     "instructions": "Ask Alice to send /start <LINK_CODE> to the bot.",

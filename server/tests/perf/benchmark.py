@@ -141,25 +141,18 @@ def time_and_count(db_base, label, fn, *args, **kwargs):
 # Prompt-token accounting (approximate - see the printed caveat)
 # ---------------------------------------------------------------------------
 def tool_schema_char_counts(tools_mod) -> dict:
+    # Phase 3: sourced from the real pmchaser.mcp.profiles module (the
+    # actual thing main.py registers per PM_CHASER_TOOL_PROFILE) rather
+    # than a hardcoded duplicate list here - the Phase 0 version of this
+    # function used a hand-written "5 tools it actually uses" list before
+    # that split was real code, which risked silently drifting from
+    # whatever profiles.py actually says once it existed.
+    from pmchaser.mcp.profiles import ALL_TOOLS, PMCHASER_BOT_TOOLS, TASK_MANAGER_BOT_TOOLS
+
     names_by_profile = {
-        "pmchaser-bot (5 tools it actually uses)": [
-            "get_chase_plan", "update_task", "telegram_send_message",
-            "resolve_unmatched", "notify_manager",
-        ],
-        "task-manager-bot (all 16, current)": [
-            "get_chase_plan", "chase_now", "get_digest_data", "create_task",
-            "create_tasks_bulk", "list_tasks", "update_task", "reassign_task",
-            "delete_task", "register_person", "delete_person", "list_people",
-            "telegram_send_message", "telegram_get_updates",
-            "resolve_unmatched", "notify_manager",
-        ],
-        "pmchaser-bot (all 16, CURRENT - the bug)": [
-            "get_chase_plan", "chase_now", "get_digest_data", "create_task",
-            "create_tasks_bulk", "list_tasks", "update_task", "reassign_task",
-            "delete_task", "register_person", "delete_person", "list_people",
-            "telegram_send_message", "telegram_get_updates",
-            "resolve_unmatched", "notify_manager",
-        ],
+        f"pmchaser-bot ({len(PMCHASER_BOT_TOOLS)} tools, post-Phase-3 split)": PMCHASER_BOT_TOOLS,
+        f"task-manager-bot ({len(TASK_MANAGER_BOT_TOOLS)} tools, post-Phase-3 split)": TASK_MANAGER_BOT_TOOLS,
+        f"unset profile / pre-Phase-3 default (all {len(ALL_TOOLS)})": ALL_TOOLS,
     }
     out = {}
     for profile, names in names_by_profile.items():
@@ -280,6 +273,13 @@ def main() -> None:
     print("\n== Tool-schema size per profile (docstring + signature chars, proxy for prompt tokens) ==")
     print("   Caveat: not the real qwen3.6 tokenizer - char count / 4 is a rough,")
     print("   commonly-used approximation. Directionally correct, not exact.")
+    print("   Second caveat, added once record_reply_outcome existed: this metric")
+    print("   only sees *static* schema size, not round-trip count. The composite")
+    print("   tool made pmchaser-bot's schema bigger (one more tool's docstring)")
+    print("   while making the common reply-handling case FASTER overall - it")
+    print("   replaces 3 separate full prompt prefill+decode cycles (update_task,")
+    print("   then an ack, then notify_manager) with 1. A bigger number here is")
+    print("   not automatically a regression; check round-trip count too.")
     for profile, chars in tool_schema_char_counts(tools).items():
         print(f"  {profile:<42} ~{chars:6d} chars  (~{chars // 4:5d} tokens, approx.)")
 

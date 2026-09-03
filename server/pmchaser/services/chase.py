@@ -178,6 +178,38 @@ def get_chase_plan(due_soon_hours: int = 24, max_unanswered: int = 3) -> dict:
         if telegram_error:
             plan["telegram_error"] = telegram_error
 
+        # Phase 3 fix, added after a live incident: the model correctly
+        # called chase_now, got real data back, then narrated a send that
+        # never happened - "confident-but-false-confirmation", the exact
+        # failure class this project's own devlog already names. SOUL.md
+        # rule 12 already says the model must call telegram_send_message/
+        # notify_manager before confirming anything - written once, far
+        # earlier in context, easy to lose track of by the time the model
+        # is several tool calls into a run. Putting the same reminder
+        # directly in the data the model is looking at when it decides
+        # what to do next is a second, more proximate line of defense -
+        # not a replacement for the SOUL.md/SKILL.md rule, a reinforcement
+        # of it at the exact decision point.
+        action_notes = []
+        if to_chase:
+            action_notes.append(
+                f"{len(to_chase)} to_chase entr{'y' if len(to_chase) == 1 else 'ies'} "
+                f"still need a real telegram_send_message(...) call each - nothing has "
+                f"been sent for any of them yet."
+            )
+        if to_escalate:
+            action_notes.append(
+                f"{len(to_escalate)} to_escalate entr{'y' if len(to_escalate) == 1 else 'ies'} "
+                f"still need a real notify_manager(...) call each - nothing has been "
+                f"escalated yet."
+            )
+        if action_notes:
+            plan["action_required"] = (
+                " ".join(action_notes)
+                + " Do not report anything as sent or escalated until the matching "
+                "tool call actually returns."
+            )
+
         bits = []
         if plan["replies_to_interpret"]:
             bits.append(f"{len(plan['replies_to_interpret'])} reply/replies to interpret")
@@ -271,5 +303,25 @@ def chase_now(owner_name: str) -> dict:
                 f"'{owner.name}' has no open task to chase right now."
                 if not skipped else
                 f"'{owner.name}'s only open task(s) are blocked — that needs the manager, not a ping."
+            )
+        else:
+            # Phase 3 fix, added after a live incident: the model called
+            # chase_now, got real matched tasks back (exactly what's in
+            # `tasks` above), then told the manager a message had been
+            # sent without ever calling telegram_send_message -
+            # "confident-but-false-confirmation," the exact failure class
+            # this project's own devlog already names. SOUL.md rule 12
+            # already covers this in prose, written once, far earlier in
+            # context; this reminder sits in the data itself, at the
+            # exact moment the model decides what to do next, as a
+            # second, more proximate line of defense - not a replacement
+            # for the SOUL.md rule, a reinforcement of it.
+            result["action_required"] = (
+                f"Nothing has been sent to {owner.name} yet. Write ONE message covering "
+                f"all {len(matched)} task(s) in `tasks` above, then call "
+                f"telegram_send_message(owner_name={owner.name!r}, text=<your message>, "
+                f"task_id={matched[0]['task_id']}) - the most urgent task's id. Only tell "
+                f"the manager a message was sent after that call actually returns a real "
+                f"checkin_id/telegram_message_id; do not confirm before calling it."
             )
         return result

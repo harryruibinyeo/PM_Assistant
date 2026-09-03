@@ -4,6 +4,14 @@ Run locally with:  python main.py
 Talks over the "streamable-http" transport so it can run in its own
 container/pod, reachable from the agent runtime over the network, rather
 than being bolted into the agent's own process.
+
+Phase 3 addition: PM_CHASER_TOOL_PROFILE selects which of the 16 tools
+this instance advertises - see pmchaser/mcp/profiles.py for why. Unset
+(the default) registers all 16, exactly as before this existed - a
+deployment that hasn't opted into running one instance per profile isn't
+affected. Set to "pmchaser-bot" or "task-manager-bot" to run the
+narrower, profile-specific server; each such deployment needs its own
+PM_CHASER_PORT and a matching hermes-config mcp_servers.pm-chaser.url.
 """
 
 import os
@@ -15,34 +23,19 @@ from starlette.responses import JSONResponse
 
 from pmchaser.db.base import init_db
 from pmchaser.mcp import tools
+from pmchaser.mcp.profiles import tools_for_profile
 
 # Loads server/.env if present (local dev). In Kubernetes, TELEGRAM_BOT_TOKEN
 # will instead come from a mounted Secret as a real environment variable, so
 # this is a no-op there - os.environ already has it either way.
 load_dotenv()
 
-mcp = MCPServer(name="pm-chaser")
+_profile = os.environ.get("PM_CHASER_TOOL_PROFILE")
 
-# The two planning tools come first deliberately: they are the entry point for
-# the scheduled runs, and each replaces a chain of five-plus calls that the
-# local model could not reliably complete.
-mcp.add_tool(tools.get_chase_plan)
-mcp.add_tool(tools.chase_now)
-mcp.add_tool(tools.get_digest_data)
+mcp = MCPServer(name="pm-chaser" if _profile is None else f"pm-chaser ({_profile})")
 
-mcp.add_tool(tools.create_task)
-mcp.add_tool(tools.create_tasks_bulk)
-mcp.add_tool(tools.list_tasks)
-mcp.add_tool(tools.update_task)
-mcp.add_tool(tools.reassign_task)
-mcp.add_tool(tools.delete_task)
-mcp.add_tool(tools.register_person)
-mcp.add_tool(tools.delete_person)
-mcp.add_tool(tools.list_people)
-mcp.add_tool(tools.telegram_send_message)
-mcp.add_tool(tools.telegram_get_updates)
-mcp.add_tool(tools.resolve_unmatched)
-mcp.add_tool(tools.notify_manager)
+for _tool_name in tools_for_profile(_profile):
+    mcp.add_tool(getattr(tools, _tool_name))
 
 
 # Plain HTTP route, not an MCP tool - chase_listener.py (a host-side process,
@@ -52,14 +45,21 @@ mcp.add_tool(tools.notify_manager)
 # port/app as the MCP endpoint with no separate server to run, and it never
 # shows up in the MCP tool schema every profile's prompt pays for, since
 # custom_route is a distinct registration path from add_tool.
-@mcp.custom_route("/internal/peek", methods=["GET"])
-async def peek(request: Request) -> JSONResponse:
-    timeout = int(request.query_params.get("timeout", "25"))
-    try:
-        new = await tools.peek_for_new_replies(timeout=timeout)
-    except tools.TelegramNotConfigured as exc:
-        return JSONResponse({"error": str(exc)}, status_code=503)
-    return JSONResponse({"new": new})
+#
+# Only registered for the pmchaser-bot profile (and the unset/all-tools
+# default) - it's specifically what triggers pmchaser-bot's own chase
+# cron job, so it has no reason to exist on a task-manager-bot-only
+# instance, and chase_listener.py's own hardcoded PEEK_URL already points
+# at pmchaser-bot's port (see BRANCH_TESTING.md).
+if _profile in (None, "pmchaser-bot"):
+    @mcp.custom_route("/internal/peek", methods=["GET"])
+    async def peek(request: Request) -> JSONResponse:
+        timeout = int(request.query_params.get("timeout", "25"))
+        try:
+            new = await tools.peek_for_new_replies(timeout=timeout)
+        except tools.TelegramNotConfigured as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse({"new": new})
 
 
 if __name__ == "__main__":
