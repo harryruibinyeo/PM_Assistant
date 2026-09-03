@@ -44,3 +44,28 @@ def count_pending(session) -> int:
     return session.execute(
         select(func.count(UnmatchedMessage.id)).where(UnmatchedMessage.handled.is_(False))
     ).scalar_one()
+
+
+def delete_referencing_task(session, task_id: int) -> None:
+    """Delete every unmatched message that genuinely lists `task_id` among
+    its JSON-encoded candidates.
+
+    Phase 2 fix for the refactor plan's finding #1: the original query was
+    `candidate_task_ids.like(f"%{task_id}%")` - a substring match against
+    the JSON text, so deleting task 5 also deleted messages whose real
+    candidates were e.g. [15, 25, 51] (both contain the substring "5").
+    This does an exact membership check by actually parsing the JSON
+    instead of pattern-matching its serialized text. Only rows with a
+    non-null candidate_task_ids are fetched at all, so this stays cheap
+    (that column is null for the common case - a single unambiguous
+    candidate resolved a different way, or none).
+    """
+    candidates = session.execute(
+        select(UnmatchedMessage).where(UnmatchedMessage.candidate_task_ids.is_not(None))
+    ).scalars().all()
+    to_delete = [
+        row for row in candidates
+        if task_id in json.loads(row.candidate_task_ids)
+    ]
+    for row in to_delete:
+        session.delete(row)

@@ -35,6 +35,70 @@ def test_send_with_task_id_records_a_checkin_atomically(fresh_db, fake_telegram)
     assert result["telegram_message_id"] is not None
 
 
+def test_send_with_failing_checkin_write_surfaces_the_failure_not_silence(fresh_db, fake_telegram, monkeypatch):
+    """Regression test for the refactor plan's finding #2: if recording
+    the check-in fails even after retries, telegram_send_message must say
+    so plainly (checkin_recorded=False + a warning) rather than a bare
+    `sent: True` that quietly implies the record exists - the original
+    failure mode was exactly this happening silently, leaving the person
+    chased again forever with no visible reason. See
+    pmchaser.services.messaging._record_checkin_with_retry's docstring."""
+    import pmchaser.services.messaging as messaging_service
+
+    tools = fresh_db
+    _link(tools, fake_telegram, "Alice", ALICE_CHAT)
+    task_id = tools.create_task("Task", "Alice", "medium")["task_id"]
+
+    call_count = {"n": 0}
+
+    class _ExplodingCheckIn:
+        def __init__(self, *args, **kwargs):
+            call_count["n"] += 1
+            raise RuntimeError("simulated write failure")
+
+    monkeypatch.setattr(messaging_service, "CheckIn", _ExplodingCheckIn)
+    monkeypatch.setattr(messaging_service.time, "sleep", lambda *_: None)  # keep the test fast
+
+    result = tools.telegram_send_message("Alice", "how's it going?", task_id=task_id)
+
+    assert result["sent"] is True  # the message really was delivered
+    assert result["checkin_id"] is None
+    assert result["checkin_recorded"] is False
+    assert "warning" in result
+    assert call_count["n"] == messaging_service._CHECKIN_WRITE_MAX_ATTEMPTS
+
+
+def test_send_succeeds_on_a_later_retry_after_a_transient_checkin_write_failure(fresh_db, fake_telegram, monkeypatch):
+    """The retry actually has to matter, not just exist: a failure on the
+    first attempt followed by a real success must still report success,
+    not give up after one try."""
+    import pmchaser.services.messaging as messaging_service
+    from pmchaser.db.models import CheckIn as RealCheckIn
+
+    tools = fresh_db
+    _link(tools, fake_telegram, "Alice", ALICE_CHAT)
+    task_id = tools.create_task("Task", "Alice", "medium")["task_id"]
+
+    call_count = {"n": 0}
+    real_init = RealCheckIn.__init__
+
+    def _fail_once_then_real(self, *args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("simulated transient failure")
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(RealCheckIn, "__init__", _fail_once_then_real)
+    monkeypatch.setattr(messaging_service.time, "sleep", lambda *_: None)
+
+    result = tools.telegram_send_message("Alice", "how's it going?", task_id=task_id)
+
+    assert result["sent"] is True
+    assert result["checkin_id"] is not None
+    assert "checkin_recorded" not in result  # only present when it actually failed
+    assert call_count["n"] == 2
+
+
 def test_send_on_someone_elses_task_is_rejected(fresh_db, fake_telegram):
     tools = fresh_db
     _link(tools, fake_telegram, "Alice", ALICE_CHAT)

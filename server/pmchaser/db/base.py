@@ -35,8 +35,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
+# Milliseconds SQLite will silently retry an operation against a lock
+# before raising "database is locked", instead of failing immediately.
+# Matters once more than one process touches the same file concurrently -
+# the chase_listener-triggered sweep, the manager's live chat, and (from
+# Phase 5) the dashboard. 5s comfortably covers a single write transaction
+# without making a genuinely stuck writer hang a caller indefinitely.
+_BUSY_TIMEOUT_MS = 5000
+
+# One row per (table, columns) pair actually queried by a WHERE/JOIN/ORDER
+# BY somewhere in pmchaser/repositories/ - see the refactor plan's finding
+# #8. `unique=True` columns (Person.telegram_chat_id, Person.link_code)
+# already get an index implicitly from their UNIQUE constraint and are
+# deliberately not repeated here.
+_INDEXES = [
+    ("idx_tasks_owner_id", "tasks", "owner_id"),
+    ("idx_tasks_status", "tasks", "status"),
+    ("idx_tasks_deadline", "tasks", "deadline"),
+    ("idx_checkins_task_id", "check_ins", "task_id"),
+    ("idx_checkins_telegram_message_id", "check_ins", "telegram_message_id"),
+    ("idx_unmatched_handled", "unmatched_messages", "handled"),
+]
 
 
 class Base(DeclarativeBase):
@@ -62,8 +84,57 @@ def _default_db_path() -> str:
     return str(server_dir / "pm_chaser.db")
 
 
+def _set_sqlite_pragmas(dbapi_connection, connection_record) -> None:
+    """Applied to every new DBAPI connection this engine opens - PRAGMAs
+    other than journal_mode are per-connection in SQLite, not persisted in
+    the file, so this must run on `connect`, not once at startup.
+
+    WAL (write-ahead logging) lets readers and a writer proceed
+    concurrently instead of the default rollback-journal mode's
+    whole-database write lock - the concrete fix for finding #16 (SQLite
+    without WAL, multiple processes hitting the same file). busy_timeout
+    is the safety net for the brief moments two writers still do collide.
+
+    Deliberately NOT also setting `PRAGMA foreign_keys=ON` here, tempting
+    as that looks next to two other PRAGMAs: SQLite defaults it OFF, and
+    pmchaser/services/people.py's delete_person only checks tasks a person
+    *owns*, not tasks that reference them via Task.manager_id - turning on
+    enforcement would make deleting a manager who owns no tasks but is
+    referenced as someone else's manager_id start raising IntegrityError
+    where it previously succeeded. That's a real, separate finding, not
+    something to fix as a side effect of a WAL/busy_timeout change; out of
+    scope for this phase.
+    """
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+    cursor.close()
+
+
 def _build_engine(db_path: str):
-    return create_engine(f"sqlite:///{db_path}", future=True)
+    new_engine = create_engine(f"sqlite:///{db_path}", future=True)
+    event.listen(new_engine, "connect", _set_sqlite_pragmas)
+    return new_engine
+
+
+def _ensure_indexes(engine) -> None:
+    """Idempotent, additive-only index creation - safe to run on every
+    startup against both a brand-new database (init_db's create_all just
+    created these tables) and an existing production one with real
+    history (create_all itself is a no-op there; CREATE INDEX IF NOT
+    EXISTS is not - see finding #8). This is deliberately NOT done via
+    Base.metadata's own `index=True` column option: that only takes effect
+    on a table create_all() actually creates, which would silently skip
+    every already-deployed database - the exact case this needs to reach.
+    A real migration tool (Phase 4) is still required for anything that
+    changes column layout; adding an index is non-destructive and
+    reversible, so it doesn't need to wait for that.
+    """
+    with engine.begin() as conn:
+        for index_name, table_name, column_name in _INDEXES:
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name}({column_name})"
+            ))
 
 
 LOCAL_TZ = ZoneInfo(os.environ.get("PM_CHASER_TZ", "Asia/Singapore"))
@@ -91,14 +162,35 @@ def configure_for_testing(db_path: str, tz_name: str | None = None) -> None:
 
 
 def init_db() -> None:
-    """Create any missing tables.
+    """Create any missing tables, then ensure every index in _INDEXES
+    exists.
 
-    Note: this creates missing TABLES only - it does not add new COLUMNS to
-    tables that already exist. A schema change to an existing table needs
-    the database recreated (or a real migration - see
-    pmchaser/db/migrations/, added in Phase 4).
+    Note: create_all() creates missing TABLES only - it does not add new
+    COLUMNS to tables that already exist. A schema change to an existing
+    table needs the database recreated (or a real migration - see
+    pmchaser/db/migrations/, added in Phase 4). Index creation
+    (_ensure_indexes) is a separate, safe exception to that limitation -
+    see its own docstring for why.
+
+    The local import below matters: splitting the original single-file
+    models.py into this module (engine/session plumbing) and
+    pmchaser/db/models.py (the ORM entity classes) means Base.metadata is
+    only populated once something has imported db.models - previously
+    that was impossible to get wrong, since defining a table and creating
+    it lived in the same file by construction. In practice main.py and
+    every test fixture already import the full pmchaser.mcp.tools chain
+    (which pulls in db.models) before ever calling init_db(), so this
+    hasn't caused a real failure - but calling init_db() from anything
+    that hasn't already done so would otherwise create_all() against an
+    empty Base.metadata (zero tables, no error) and then fail confusingly
+    in _ensure_indexes with "no such table". A local import (not
+    module-level, which would be circular - db.models itself imports
+    Base/utcnow from this module) makes init_db() self-sufficient.
     """
+    from pmchaser.db import models as _models  # noqa: F401
+
     Base.metadata.create_all(engine)
+    _ensure_indexes(engine)
 
 
 @contextmanager

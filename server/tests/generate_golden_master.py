@@ -77,10 +77,17 @@ def main() -> None:
         return {"ok": True, "result": {"message_id": 9001}}
 
     with mock.patch.object(telegram_integration.TelegramClient, "send_message", _fake_manager_send):
-        from golden_scenario import FROZEN_INSTANT, run_scenario  # local import: tests/ on sys.path via conftest rootdir
+        # local import: tests/ on sys.path via conftest rootdir
+        from golden_scenario import FROZEN_INSTANT, normalize_for_comparison, run_scenario
 
         with freeze_time(FROZEN_INSTANT):
             result = run_scenario(tools, fake, manager_sent)
+
+    # link_code is deliberately non-deterministic (secrets.choice) - see
+    # golden_scenario.py's module docstring. Normalized before writing so
+    # the committed file doesn't pin an arbitrary, meaningless value that
+    # would just look like a diff on every regeneration.
+    result = normalize_for_comparison(result)
 
     GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     GOLDEN_PATH.write_text(

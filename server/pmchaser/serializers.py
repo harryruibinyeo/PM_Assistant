@@ -20,8 +20,18 @@ from pmchaser.repositories import checkins as checkins_repo
 from pmchaser.repositories import people as people_repo
 
 
-def person_summary(session, person: Person) -> dict:
-    open_count = people_repo.count_open_tasks(session, person.id)
+def person_summary(session, person: Person, open_task_count: int | None = None) -> dict:
+    """`open_task_count`, when given, must be exactly what
+    pmchaser.repositories.people.count_open_tasks(session, person.id)
+    would have returned. Batch callers (list_people,
+    get_digest_data's unreachable-people list) pass in a pre-fetched
+    dict from count_open_tasks_by_owner_ids so this function never issues
+    its own query - same pattern, and same reasoning, as
+    task_summary's `checkins` parameter."""
+    open_count = (
+        open_task_count if open_task_count is not None
+        else people_repo.count_open_tasks(session, person.id)
+    )
     return {
         "person_id": person.id,
         "name": person.name,
@@ -39,11 +49,22 @@ def person_summary(session, person: Person) -> dict:
     }
 
 
-def task_summary(session, task: Task, now: datetime | None = None) -> dict:
+def task_summary(session, task: Task, now: datetime | None = None, checkins: list | None = None) -> dict:
+    """`checkins`, when given, must be exactly what
+    pmchaser.repositories.checkins.checkins_for_task(session, task.id)
+    would have returned (all check-ins for this task, any order - this
+    function re-derives "most recent" itself). Batch callers
+    (list_tasks/get_chase_plan/chase_now/get_digest_data) pass in a
+    pre-fetched, grouped-by-task-id list from checkins_by_task_ids so this
+    function never issues its own query - the Phase 2 fix for the
+    refactor plan's finding #6 (N+1: one query per task, per call, for
+    every list-shaped tool). Single-task callers (create_task,
+    update_task, reassign_task) omit it and get the single-query fallback.
+    """
     now = now or db_base.utcnow()
     local_tz = db_base.LOCAL_TZ
 
-    check_ins = checkins_repo.checkins_for_task(session, task.id)
+    check_ins = checkins if checkins is not None else checkins_repo.checkins_for_task(session, task.id)
     sent = [c for c in check_ins if c.sent_at is not None]
     last = sent[0] if sent else None
 

@@ -8,16 +8,61 @@ Determinism: every timestamp-dependent field (hours_until_deadline,
 hours_since_last_checkin, etc.) depends on wall-clock "now" at call time,
 so the caller MUST wrap this in `freeze_time(FROZEN_INSTANT)` - see
 test_golden_master.py.
+
+link_code is a deliberate, permanent exception to full determinism as of
+the Phase 2 fix for the refactor plan's finding #3: generate_link_code
+moved from `random.choices` (seedable, and originally seeded right here)
+to `secrets.choice` (the OS CSPRNG - a real credential shouldn't be
+predictable, including by a fixed test seed). `normalize_for_comparison`
+below masks every link_code value before comparison so the golden
+snapshot still checks everything else byte-for-byte.
 """
 
 from __future__ import annotations
 
-import random
-
 FROZEN_INSTANT = "2026-08-14T04:00:00+00:00"  # = 2026-08-14T12:00:00 in Asia/Singapore (UTC+8)
-RANDOM_SEED = 20260814  # register_person's link codes go through random.choices;
-                          # without a fixed seed here, the golden snapshot would
-                          # never replay identically.
+
+_LINK_CODE_PLACEHOLDER = "<LINK_CODE>"
+
+
+def _collect_link_codes(value, found: set[str]) -> None:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == "link_code" and isinstance(v, str):
+                found.add(v)
+            _collect_link_codes(v, found)
+    elif isinstance(value, list):
+        for v in value:
+            _collect_link_codes(v, found)
+
+
+def _mask_codes(value, codes: set[str]):
+    if isinstance(value, dict):
+        return {k: _mask_codes(v, codes) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_codes(v, codes) for v in value]
+    if isinstance(value, str):
+        masked = value
+        for code in codes:
+            masked = masked.replace(code, _LINK_CODE_PLACEHOLDER)
+        return masked
+    return value
+
+
+def normalize_for_comparison(value):
+    """Masks every occurrence of a generated link_code, wherever it
+    appears - not just the `link_code` dict field itself, but also its
+    embedded appearance inside free text like register_person's
+    `instructions` ("...send /start <code> to the bot") and, were a real
+    bot configured, `link_url`. A first pass collects every value found
+    under a `link_code` key; a second pass replaces every occurrence of
+    those exact strings anywhere in the structure. Applied independently
+    to both the live result and the loaded golden file before comparing -
+    see this module's docstring for why link_code can never be pinned to
+    a literal value."""
+    codes: set[str] = set()
+    _collect_link_codes(value, codes)
+    return _mask_codes(value, codes)
 
 
 def run_scenario(tools, fake_telegram, fake_manager_send: list[dict]) -> dict:
@@ -29,8 +74,6 @@ def run_scenario(tools, fake_telegram, fake_manager_send: list[dict]) -> dict:
     patch appends to (see test_notify_manager.py's fake_manager_bot for
     the same pattern) - passed in so notify_manager can be exercised too.
     """
-    random.seed(RANDOM_SEED)
-
     out: dict = {}
 
     out["register_bob_manager"] = tools.register_person("Bob", role="manager")

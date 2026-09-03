@@ -1,16 +1,25 @@
 """Telegram send/receive and reply-matching business logic - called by the
 thin adapters in pmchaser/mcp/tools.py.
 
-Two intentional Phase-2 fix targets are preserved unchanged here (see the
-refactor plan's findings #2 and the "hardest constraint" section): sending
-a message and recording its check-in are two separate transactions, and
-the BotState.last_update_id cursor advance happens inside
-telegram_get_updates only - peek_for_new_replies below never touches it.
+One intentional Phase-2-preserved design point (see the "hardest
+constraint" section): the BotState.last_update_id cursor advance happens
+inside telegram_get_updates only - peek_for_new_replies below never
+touches it.
+
+telegram_send_message's send-then-record split (refactor plan finding #2)
+is addressed below, not eliminated: there is no way to make an external
+HTTP call and a local DB write one atomic operation - no distributed
+transaction spans Telegram's API and SQLite. See
+_record_checkin_with_retry's docstring for what "fixed" actually means
+here: the original failure mode was this failing *silently* (a real
+`SKILL.md`-documented symptom - "chased again within the hour, forever"),
+not that it could fail at all. What's fixed is the silence.
 """
 
 from __future__ import annotations
 
 import json
+import time
 
 from sqlalchemy import select
 
@@ -22,6 +31,55 @@ from pmchaser.integrations.telegram import TelegramNotConfigured
 from pmchaser.repositories import checkins as checkins_repo
 from pmchaser.repositories import people as people_repo
 from pmchaser.repositories import unmatched as unmatched_repo
+
+
+_CHECKIN_WRITE_MAX_ATTEMPTS = 3
+_CHECKIN_WRITE_RETRY_BASE_DELAY_SECONDS = 0.05
+
+
+def _record_checkin_with_retry(
+    task_id: int, text: str, message_id: int | None,
+) -> tuple[int | None, Exception | None]:
+    """Phase 2 fix for the refactor plan's finding #2. There is no way to
+    make the already-completed Telegram send and this DB write one atomic
+    operation - no distributed transaction spans an external HTTP API and
+    a local SQLite file, so "atomic" was never achievable here. What this
+    closes is the *silent* half of the original failure: WAL +
+    busy_timeout (pmchaser/db/base.py) already absorb the most likely
+    transient cause (lock contention) at the driver level, so this retry
+    is a shallow extra safety net on top of that - and if the write still
+    fails after it, the caller gets `checkin_recorded: False` and a
+    warning back, instead of a plain `sent: True` that quietly implies
+    the check-in exists when it doesn't. The original, undetected symptom
+    (see SKILL.md) was the person being "chased again within the hour,
+    forever" with no record anyone could see explaining why - failing
+    loudly here is what actually fixes that, since the retry alone
+    cannot guarantee the write succeeds.
+
+    Catches bare Exception deliberately: by this point the message has
+    already been delivered, so raising here would crash the whole tool
+    call over a state Telegram itself doesn't know or care about - a
+    controlled, visible failure response is strictly better than an
+    unhandled exception for something that already, unavoidably, happened.
+    """
+    last_error: Exception | None = None
+    for attempt in range(_CHECKIN_WRITE_MAX_ATTEMPTS):
+        try:
+            with db_base.session_scope() as session:
+                checkin = CheckIn(
+                    task_id=task_id,
+                    sent_at=db_base.utcnow(),
+                    message_sent=text,
+                    telegram_message_id=message_id,
+                )
+                session.add(checkin)
+                session.flush()
+                return checkin.id, None
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            last_error = exc
+            if attempt < _CHECKIN_WRITE_MAX_ATTEMPTS - 1:
+                time.sleep(_CHECKIN_WRITE_RETRY_BASE_DELAY_SECONDS * (attempt + 1))
+    return None, last_error
 
 
 def telegram_send_message(owner_name: str, text: str, task_id: int | None = None) -> dict:
@@ -56,25 +114,26 @@ def telegram_send_message(owner_name: str, text: str, task_id: int | None = None
     message_id = (result.get("result") or {}).get("message_id")
 
     checkin_id = None
+    checkin_error = None
     if task_id is not None:
-        with db_base.session_scope() as session:
-            checkin = CheckIn(
-                task_id=task_id,
-                sent_at=db_base.utcnow(),
-                message_sent=text,
-                telegram_message_id=message_id,
-            )
-            session.add(checkin)
-            session.flush()
-            checkin_id = checkin.id
+        checkin_id, checkin_error = _record_checkin_with_retry(task_id, text, message_id)
 
-    return {
+    response = {
         "sent": True,
         "to": owner_name,
         "task_id": task_id,
         "checkin_id": checkin_id,
         "telegram_message_id": message_id,
     }
+    if checkin_error is not None:
+        response["checkin_recorded"] = False
+        response["warning"] = (
+            f"The message was delivered, but recording the check-in failed "
+            f"after {_CHECKIN_WRITE_MAX_ATTEMPTS} attempts ({checkin_error}) - "
+            f"{owner_name} may be re-chased even though they already received "
+            f"this message. Worth checking manually."
+        )
+    return response
 
 
 def _store_unmatched(session, person, chat_id, text, reason, candidates=None) -> dict:
@@ -143,9 +202,7 @@ def telegram_get_updates() -> dict:
                     # Telegram's own auto-sent first-contact message. Not a
                     # linking attempt and not an update - discard it.
                     continue
-                person = session.execute(
-                    select(Person).where(Person.link_code == code)
-                ).scalar_one_or_none()
+                person = people_repo.find_by_link_code(session, code)
                 if person is not None:
                     person.telegram_chat_id = chat_id
                     person.link_code = None

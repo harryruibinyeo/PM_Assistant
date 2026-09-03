@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import os
 import random
 import sys
 import tempfile
@@ -26,6 +27,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 LM_STUDIO_URL = "http://192.168.1.8:1234/v1"
+
+# The Phase 2 structured-logging fix (pmchaser/logging.py) makes every
+# register_person/create_task/... call during seed data setup below print
+# a "tool_call ... outcome=ok" line - real and correct in production, but
+# noise here where the point is the summary numbers. Set as an env var
+# (not logging.getLogger(...).setLevel() directly) because pmchaser's
+# logger configures itself lazily on the first tool call and would
+# otherwise reset the level back to its own INFO default at that point,
+# undoing a level set here beforehand. Silenced for this script only;
+# production logging is untouched.
+os.environ.setdefault("PM_CHASER_LOG_LEVEL", "WARNING")
 
 
 # ---------------------------------------------------------------------------
@@ -166,20 +178,40 @@ def probe_lm_studio_latency(trials: int = 3) -> None:
     endpoint: a small prompt vs. a large one, repeated over several trials
     with a random nonce in every prompt.
 
-    The nonce matters: an early version of this probe reused the literal
-    same prompt text across runs and got wildly inconsistent numbers
-    (743 ms/1K tokens on one run, 5.4 ms/1K on the next, from the same
-    machine and model) because LM Studio's own KV-prefix caching was
-    reusing the previous run's cached prefill for the repeated text - a
-    real, live demonstration of the "KV-cache stability" latency lever in
-    the refactor plan, not just server noise. Forcing unique content per
-    trial measures actual cold prefill cost instead of a cache hit.
+    The nonce matters, twice over - both real, both caught by comparing
+    results across separate runs of this exact script:
+
+    1. An early version reused the literal same prompt text across runs
+       and got wildly inconsistent numbers (743 ms/1K tokens on one run,
+       5.4 ms/1K on the next, same machine and model) because LM
+       Studio's own KV-prefix caching was reusing the previous run's
+       cached prefill for the repeated text.
+    2. The fix for #1 used the stdlib `random` module seeded by
+       `main()`'s `random.seed(42)` (for reproducible DB-seeding data) -
+       but that makes `random.randint()` here deterministic too, so two
+       separate invocations of this script produced byte-identical
+       "unique" nonces and silently hit the exact same #1 caching bug
+       one level up: ~5427 ms/1K on one invocation, ~194 ms/1K
+       immediately after on a second invocation of the same script,
+       because LM Studio still had the first invocation's identical text
+       cached. A dedicated `secrets`-seeded Random instance, independent
+       of the shared `random` module `main()` seeds, is what actually
+       guarantees a cold prefill every time this function runs, in any
+       script invocation.
+
     Skips cleanly if unreachable."""
     try:
         import httpx2
     except ImportError:
         print("  (httpx2 not available for the LM Studio probe - skipped)")
         return
+
+    # Deliberately NOT the `random` module used elsewhere in this file:
+    # main() seeds that with a fixed value for reproducible DB-seeding
+    # data, which would make these "unique" nonces identical across
+    # separate script runs - see the docstring above.
+    import secrets
+    nonce_rng = secrets.SystemRandom()
 
     def _time_completion(prompt: str) -> float | None:
         try:
@@ -202,10 +234,10 @@ def probe_lm_studio_latency(trials: int = 3) -> None:
 
     deltas_per_1k = []
     for i in range(trials):
-        nonce = random.randint(100000, 999999)
+        nonce = nonce_rng.randint(100000, 999999)
         small_prompt = f"Reply with only the word OK. nonce={nonce}"
-        # ~1700 unique tokens of filler, never repeated across trials.
-        filler = " ".join(f"filler{random.randint(0, 999999)}" for _ in range(1200))
+        # ~1700 unique tokens of filler, never repeated across trials or runs.
+        filler = " ".join(f"filler{nonce_rng.randint(0, 999999)}" for _ in range(1200))
         large_prompt = f"{small_prompt} {filler}"
 
         small_ms = _time_completion(small_prompt)

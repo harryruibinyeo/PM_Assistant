@@ -4,8 +4,9 @@ pmchaser/mcp/tools.py, which carries the full public docstring."""
 from __future__ import annotations
 
 from pmchaser.db import base as db_base
-from pmchaser.domain.constants import CLOSED_STATUSES, PRIORITY_RANK
+from pmchaser.domain.constants import PRIORITY_RANK
 from pmchaser.domain.time_utils import iso_local
+from pmchaser.repositories import checkins as checkins_repo
 from pmchaser.repositories import people as people_repo
 from pmchaser.repositories import tasks as tasks_repo
 from pmchaser.repositories import unmatched as unmatched_repo
@@ -17,18 +18,33 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
         now = db_base.utcnow()
         local_tz = db_base.LOCAL_TZ
 
-        managers = [person_summary(session, p) for p in people_repo.list_managers(session)]
+        # Fetched once and reused for both `managers` (ordered by id - see
+        # list_managers) and the unreachable-people list below (which
+        # needs every person, ordered by name - see list_people): managers
+        # are always a subset of all_people, so one grouped open-task-count
+        # query covers both instead of querying per person in either list
+        # - the person-level N+1 found while benchmarking finding #6's
+        # task-level fix (same shape, see
+        # people_repo.count_open_tasks_by_owner_ids's docstring).
+        all_people = people_repo.list_people(session)
+        open_counts = people_repo.count_open_tasks_by_owner_ids(session, [p.id for p in all_people])
 
-        tasks = tasks_repo.list_all(session)
+        managers = [
+            person_summary(session, p, open_task_count=open_counts.get(p.id, 0))
+            for p in people_repo.list_managers(session)
+        ]
+
+        # Pre-filtered to non-closed statuses in SQL - see
+        # tasks_repo.list_open's docstring.
+        tasks = tasks_repo.list_open(session)
+        checkins_by_task = checkins_repo.checkins_by_task_ids(session, [t.id for t in tasks])
 
         active: list[dict] = []
         overdue = 0
         unresponsive: list[dict] = []
         blocked: list[dict] = []
         for task in tasks:
-            if task.status in CLOSED_STATUSES:
-                continue
-            info = task_summary(session, task, now)
+            info = task_summary(session, task, now, checkins=checkins_by_task.get(task.id, []))
 
             if task.status == "blocked":
                 # These are deliberately not chased any more (see
@@ -76,8 +92,8 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
         )
 
         unreachable = [
-            person_summary(session, p)
-            for p in people_repo.list_people(session)
+            person_summary(session, p, open_task_count=open_counts.get(p.id, 0))
+            for p in all_people
             if not p.telegram_chat_id
         ]
         unreachable = [p for p in unreachable if p["open_task_count"] > 0]

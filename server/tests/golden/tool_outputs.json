@@ -125,7 +125,7 @@
     "total_checkins": 0,
     "unanswered_checkin_count": 0,
     "updated_at_local": "2026-08-14T12:00:00+08:00",
-    "warning": "'Carol' has not linked Telegram yet and cannot be messaged. Their link code is JBE6IW."
+    "warning": "'Carol' has not linked Telegram yet and cannot be messaged. Their link code is <LINK_CODE>."
   },
   "create_tasks_bulk": {
     "created": [
@@ -209,7 +209,7 @@
     ],
     "unreachable": [
       {
-        "link_code": "JBE6IW",
+        "link_code": "<LINK_CODE>",
         "link_url": null,
         "name": "Carol",
         "task_count": 1
@@ -348,7 +348,7 @@
     "unreachable_people": [
       {
         "is_linked": false,
-        "link_code": "JBE6IW",
+        "link_code": "<LINK_CODE>",
         "link_url": null,
         "name": "Carol",
         "open_task_count": 1,
@@ -396,7 +396,7 @@
     },
     {
       "is_linked": false,
-      "link_code": "JBE6IW",
+      "link_code": "<LINK_CODE>",
       "link_url": null,
       "name": "Carol",
       "open_task_count": 2,
@@ -530,24 +530,24 @@
     "updated_at_local": "2026-08-14T12:00:00+08:00"
   },
   "register_alice": {
-    "instructions": "Ask Alice to send /start XCVZEF to the bot.",
-    "link_code": "XCVZEF",
+    "instructions": "Ask Alice to send /start <LINK_CODE> to the bot.",
+    "link_code": "<LINK_CODE>",
     "link_url": null,
     "name": "Alice",
     "person_id": 2,
     "role": "team_member"
   },
   "register_bob_manager": {
-    "instructions": "Ask Bob to send /start 01SB42 to the bot.",
-    "link_code": "01SB42",
+    "instructions": "Ask Bob to send /start <LINK_CODE> to the bot.",
+    "link_code": "<LINK_CODE>",
     "link_url": null,
     "name": "Bob",
     "person_id": 1,
     "role": "manager"
   },
   "register_carol": {
-    "instructions": "Ask Carol to send /start JBE6IW to the bot.",
-    "link_code": "JBE6IW",
+    "instructions": "Ask Carol to send /start <LINK_CODE> to the bot.",
+    "link_code": "<LINK_CODE>",
     "link_url": null,
     "name": "Carol",
     "person_id": 3,

@@ -40,6 +40,7 @@ here, don't - that's a live prompt change, not a comment edit.
 from __future__ import annotations
 
 from pmchaser.integrations.telegram import TelegramNotConfigured
+from pmchaser.logging import log_tool_call
 from pmchaser.services.chase import chase_now as _chase_now
 from pmchaser.services.chase import get_chase_plan as _get_chase_plan
 from pmchaser.services.digest import get_digest_data as _get_digest_data
@@ -102,7 +103,8 @@ def create_task(
             single manager in the system (today's setup) it is resolved
             automatically and this can be omitted.
     """
-    return _create_task(
+    return log_tool_call(
+        "create_task", _create_task,
         title=title,
         owner_name=owner_name,
         priority=priority,
@@ -141,7 +143,7 @@ def create_tasks_bulk(tasks: list[dict]) -> dict:
             never the whole batch.
         summary: counts, for a one-line report back to the manager.
     """
-    return _create_tasks_bulk(tasks)
+    return log_tool_call("create_tasks_bulk", _create_tasks_bulk, tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +167,10 @@ def list_tasks(
         owner_name: If set, only tasks owned by this person (case-insensitive).
         due_soon_hours: Window size used by the "due_soon" filter.
     """
-    return _list_tasks(filter=filter, owner_name=owner_name, due_soon_hours=due_soon_hours)
+    return log_tool_call(
+        "list_tasks", _list_tasks,
+        filter=filter, owner_name=owner_name, due_soon_hours=due_soon_hours,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +198,8 @@ def update_task(
         title: New title.
         owner_name: Reassign to a different registered person.
     """
-    return _update_task(
+    return log_tool_call(
+        "update_task", _update_task,
         task_id=task_id,
         status=status,
         progress_pct=progress_pct,
@@ -215,7 +221,7 @@ def reassign_task(task_id: int, new_owner_name: str) -> dict:
     effect of an unrelated field edit in the same call. Use this whenever the
     intent is specifically "move this task to someone else."
     """
-    return _reassign_task(task_id, new_owner_name)
+    return log_tool_call("reassign_task", _reassign_task, task_id, new_owner_name)
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +233,7 @@ def delete_task(task_id: int) -> dict:
     Prefer update_task(status="cancelled") for work that was dropped — that
     keeps the record. Use this only for tasks created by mistake.
     """
-    return _delete_task(task_id)
+    return log_tool_call("delete_task", _delete_task, task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +255,10 @@ def register_person(
             for linking to work).
         role: "team_member" or "manager".
     """
-    return _register_person(name, telegram_username=telegram_username, role=role)
+    return log_tool_call(
+        "register_person", _register_person,
+        name, telegram_username=telegram_username, role=role,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +274,7 @@ def list_people(role: str | None = None) -> list[dict]:
     Args:
         role: Optionally filter to "manager" or "team_member".
     """
-    return _list_people(role=role)
+    return log_tool_call("list_people", _list_people, role=role)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +293,10 @@ def telegram_send_message(owner_name: str, text: str, task_id: int | None = None
         text: Message body.
         task_id: The task being chased, if this is a chase message.
     """
-    return _telegram_send_message(owner_name, text, task_id=task_id)
+    return log_tool_call(
+        "telegram_send_message", _telegram_send_message,
+        owner_name, text, task_id=task_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +320,7 @@ def telegram_get_updates() -> dict:
 
     Messages from people who aren't registered are discarded.
     """
-    return _telegram_get_updates()
+    return log_tool_call("telegram_get_updates", _telegram_get_updates)
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +338,10 @@ def resolve_unmatched(unmatched_id: int, task_id: int | None = None) -> dict:
     After attaching a message to a task, call update_task separately if the
     status or progress changed.
     """
-    return _resolve_unmatched(unmatched_id, task_id=task_id)
+    return log_tool_call(
+        "resolve_unmatched", _resolve_unmatched,
+        unmatched_id, task_id=task_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +387,10 @@ def get_chase_plan(
     followed up on far sooner than a low-priority one. See chase_now for a
     manual, floor-bypassing chase of one named person on demand.
     """
-    return _get_chase_plan(due_soon_hours=due_soon_hours, max_unanswered=max_unanswered)
+    return log_tool_call(
+        "get_chase_plan", _get_chase_plan,
+        due_soon_hours=due_soon_hours, max_unanswered=max_unanswered,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +430,7 @@ def chase_now(owner_name: str) -> dict:
             guess or infer this from earlier conversation context; ask if
             it wasn't given explicitly in the request.
     """
-    return _chase_now(owner_name)
+    return log_tool_call("chase_now", _chase_now, owner_name)
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +457,7 @@ def get_digest_data(at_risk_hours: int = 24) -> dict:
         at_risk_hours: Tasks due within this many hours are flagged
             `due_within_window` for your consideration.
     """
-    return _get_digest_data(at_risk_hours=at_risk_hours)
+    return log_tool_call("get_digest_data", _get_digest_data, at_risk_hours=at_risk_hours)
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +475,7 @@ def delete_person(name: str) -> dict:
     has no concept of "the human already agreed," only of what's safe to
     allow if asked.
     """
-    return _delete_person(name)
+    return log_tool_call("delete_person", _delete_person, name)
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +496,7 @@ def notify_manager(text: str) -> dict:
         text: The message body. Say who replied, on which task, and what
             changed — not a raw status dump.
     """
-    return _notify_manager(text)
+    return log_tool_call("notify_manager", _notify_manager, text)
 
 
 # ---------------------------------------------------------------------------

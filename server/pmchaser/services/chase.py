@@ -17,6 +17,7 @@ from pmchaser.domain import chase_policy
 from pmchaser.domain.constants import CLOSED_STATUSES
 from pmchaser.domain.time_utils import hours_between, iso_local
 from pmchaser.integrations import telegram as telegram_integration
+from pmchaser.repositories import checkins as checkins_repo
 from pmchaser.repositories import people as people_repo
 from pmchaser.repositories import tasks as tasks_repo
 from pmchaser.serializers import task_summary
@@ -36,7 +37,12 @@ def get_chase_plan(due_soon_hours: int = 24, max_unanswered: int = 3) -> dict:
         # uses for its manager auto-resolve (people_repo.get_single_manager).
         manager_candidates = people_repo.list_managers(session)
         manager = manager_candidates[0] if manager_candidates else None
-        tasks = tasks_repo.list_all(session)
+
+        # Pre-filtered in SQL (status/deadline/window) - see
+        # tasks_repo.list_chase_eligible's docstring for why this is a
+        # behavior-identical rewrite, not a new rule.
+        tasks = tasks_repo.list_chase_eligible(session, now, due_soon_hours)
+        checkins_by_task = checkins_repo.checkins_by_task_ids(session, [t.id for t in tasks])
 
         candidates: list[dict] = []
         skipped: list[dict] = []
@@ -44,18 +50,8 @@ def get_chase_plan(due_soon_hours: int = 24, max_unanswered: int = 3) -> dict:
         unreachable: dict[str, dict] = {}
 
         for task in tasks:
-            if task.status in CLOSED_STATUSES:
-                continue
-            if not task.deadline:
-                continue
-
             hours_left = hours_between(task.deadline, now)
-            overdue = chase_policy.is_overdue(hours_left)
-            due_soon = chase_policy.is_due_soon(hours_left, due_soon_hours)
-            if not (overdue or due_soon):
-                continue
-
-            info = task_summary(session, task, now)
+            info = task_summary(session, task, now, checkins=checkins_by_task.get(task.id, []))
 
             if not info["owner_is_linked"]:
                 owner = task.owner
@@ -219,6 +215,7 @@ def chase_now(owner_name: str) -> dict:
 
         now = db_base.utcnow()
         tasks = tasks_repo.list_for_owner(session, owner.id)
+        checkins_by_task = checkins_repo.checkins_by_task_ids(session, [t.id for t in tasks])
 
         matched: list[dict] = []
         skipped: list[dict] = []
@@ -237,7 +234,7 @@ def chase_now(owner_name: str) -> dict:
 
             hours_left = hours_between(task.deadline, now)
 
-            info = task_summary(session, task, now)
+            info = task_summary(session, task, now, checkins=checkins_by_task.get(task.id, []))
             matched.append({
                 "task_id": task.id,
                 "title": task.title,

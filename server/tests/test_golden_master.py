@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from freezegun import freeze_time
 
-from tests.golden_scenario import FROZEN_INSTANT, run_scenario
+from tests.golden_scenario import FROZEN_INSTANT, normalize_for_comparison, run_scenario
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "tool_outputs.json"
 
@@ -43,6 +43,10 @@ def test_golden_master_tool_outputs_are_byte_identical(fresh_db, fake_telegram, 
     # Round-trip through JSON so the comparison matches exactly what the
     # committed snapshot file (and, eventually, an MCP client) would see.
     current = json.loads(json.dumps(result, sort_keys=True, default=str))
+    # link_code is deliberately non-deterministic (secrets.choice, not a
+    # seedable PRNG - see golden_scenario.py's module docstring) - masked
+    # on both sides so everything else still compares byte-for-byte.
+    current = normalize_for_comparison(current)
 
     assert GOLDEN_PATH.exists(), (
         f"No golden snapshot at {GOLDEN_PATH}. Generate it once with "
@@ -50,7 +54,7 @@ def test_golden_master_tool_outputs_are_byte_identical(fresh_db, fake_telegram, 
         f"hand, and commit it - it becomes the reference every later phase "
         f"is checked against."
     )
-    golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+    golden = normalize_for_comparison(json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
 
     assert current == golden, (
         "Golden-master tool output drifted from the committed snapshot. "

@@ -12,10 +12,27 @@ token.
 Moved unchanged from server/telegram_client.py as part of the Phase 1
 structural refactor - internals (including the module-level function /
 TelegramClient method duplication - see pmchaser/services/notifications.py's
-module docstring) are deliberately untouched here. The async rewrite that
-removes the blocking-event-loop-starvation risk on the send path is a
-Phase 2 concern, done once, on this already-relocated file, rather than
-twice.
+module docstring) are deliberately untouched here.
+
+Phase 2 correction to the refactor plan's finding #9 ("blocking Telegram
+I/O... still live on the send path"): that assumed the 16 registered MCP
+tools run on the same event loop `/internal/peek` does, so a blocking
+`send_message`/`get_updates` call there would starve concurrent requests
+the same way the peek incident did. Checking the installed mcp SDK's own
+dispatch code (mcp/server/mcpserver/utilities/func_metadata.py) disproves
+that: "a sync function runs on a worker thread" - `call_fn` routes every
+synchronous tool through `anyio.to_thread.run_sync`, not the main event
+loop, for every one of the 16 tools. send_message/get_updates staying
+synchronous does not reproduce the peek incident; rewriting them async
+would only matter for anyio's bounded worker-thread-pool capacity under
+heavy concurrency, a materially smaller and more theoretical concern for
+this system's real scale. No rewrite done here for that reason.
+
+What *is* still real and fixed in Phase 2: get_updates_async (used only by
+the peek path) opened a brand-new httpx2.AsyncClient - and so a fresh TLS
+handshake - on every single call, called back-to-back forever by
+chase_listener.py. TelegramClient now keeps one AsyncClient alive for the
+process's lifetime and reuses it.
 """
 
 from __future__ import annotations
@@ -71,6 +88,7 @@ class TelegramClient:
     def __init__(self, token: str):
         self._token = token
         self._bot_username: str | None = None
+        self._async_client: httpx2.AsyncClient | None = None
 
     def get_bot_username(self) -> str | None:
         """The bot's @username, fetched from Telegram once and cached.
@@ -145,13 +163,20 @@ class TelegramClient:
         lines. `httpx2.AsyncClient` actually yields control while waiting
         on the network, so the event loop stays free to service everything
         else in the meantime.
+
+        Phase 2 fix: reuses one AsyncClient (self._async_client) for the
+        process's lifetime instead of opening (and TLS-handshaking) a new
+        one on every call - this is invoked back-to-back forever by
+        chase_listener.py, every ~25s, so that handshake cost was paid
+        needlessly on every single peek.
         """
+        if self._async_client is None:
+            self._async_client = httpx2.AsyncClient()
         url = f"{TELEGRAM_API_BASE}/bot{self._token}/getUpdates"
         params: dict[str, int] = {"timeout": timeout}
         if offset is not None:
             params["offset"] = offset
-        async with httpx2.AsyncClient() as client:
-            resp = await client.get(url, params=params, timeout=timeout + 10)
+        resp = await self._async_client.get(url, params=params, timeout=timeout + 10)
         resp.raise_for_status()
         return resp.json().get("result", [])
 

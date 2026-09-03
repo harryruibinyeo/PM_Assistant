@@ -18,6 +18,12 @@ def find_by_name(session, name: str) -> Person | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
+def find_by_link_code(session, link_code: str) -> Person | None:
+    return session.execute(
+        select(Person).where(Person.link_code == link_code)
+    ).scalar_one_or_none()
+
+
 def list_people(session, role: str | None = None) -> list[Person]:
     stmt = select(Person).order_by(Person.name)
     if role:
@@ -42,11 +48,35 @@ def get_single_manager(session) -> Person | None:
 
 
 def count_open_tasks(session, person_id: int) -> int:
+    """Single-person lookup - still used by callers that only ever
+    serialize one person (register_person, delete_person's precheck).
+    See count_open_tasks_by_owner_ids for the N+1 fix used by
+    list-shaped callers."""
     return session.execute(
         select(func.count(Task.id)).where(
             Task.owner_id == person_id, Task.status.in_(OPEN_STATUSES)
         )
     ).scalar_one()
+
+
+def count_open_tasks_by_owner_ids(session, person_ids: list[int]) -> dict[int, int]:
+    """One grouped query for every person's open-task count, instead of
+    pmchaser/serializers.py::person_summary running count_open_tasks once
+    per person in a loop - found while benchmarking the Phase 2 task-level
+    N+1 fix (finding #6): get_digest_data's unreachable-people list and
+    services/people.py::list_people have the exact same per-row query
+    shape, just at the Person level instead of Task. Missing from a
+    person_id's result means zero open tasks, not "not counted" -
+    callers should use `.get(person_id, 0)`.
+    """
+    if not person_ids:
+        return {}
+    rows = session.execute(
+        select(Task.owner_id, func.count(Task.id))
+        .where(Task.owner_id.in_(person_ids), Task.status.in_(OPEN_STATUSES))
+        .group_by(Task.owner_id)
+    ).all()
+    return {owner_id: count for owner_id, count in rows}
 
 
 def count_all_tasks(session, person_id: int) -> int:

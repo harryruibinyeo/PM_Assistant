@@ -15,6 +15,51 @@ def test_register_person_returns_link_code(fresh_db):
     assert alice["role"] == "team_member"
 
 
+def test_link_codes_are_unique_and_well_formed(fresh_db):
+    """Phase 2 fix (refactor plan finding #3): link codes are a real
+    credential and must be unpredictable and collision-checked, not just
+    "probably fine". 200 registrations is nowhere near enough to trigger
+    a genuine collision (~2.18 billion possible codes) - this is a
+    sanity/format check, not a statistical uniqueness proof."""
+    from pmchaser.domain.constants import LINK_CODE_ALPHABET
+
+    tools = fresh_db
+    codes = set()
+    for i in range(200):
+        person = tools.register_person(f"Person{i}")
+        code = person["link_code"]
+        assert len(code) == 6
+        assert all(ch in LINK_CODE_ALPHABET for ch in code)
+        codes.add(code)
+    assert len(codes) == 200  # every one distinct
+
+
+def test_register_person_survives_a_forced_link_code_collision(fresh_db, monkeypatch):
+    """Forces a collision on the first attempt to prove the retry loop
+    (pmchaser.services.people._generate_unique_link_code) actually runs,
+    rather than trusting the ~1-in-2.18-billion odds to exercise it."""
+    from pmchaser.services import people as people_service
+
+    calls = {"n": 0}
+    real_generate = people_service.generate_link_code
+
+    def _colliding_then_real(*args, **kwargs):
+        calls["n"] += 1
+        return "AAAAAA" if calls["n"] == 1 else real_generate(*args, **kwargs)
+
+    tools = fresh_db
+    # Pre-occupy "AAAAAA" so the first generated code collides for real.
+    monkeypatch.setattr(people_service, "generate_link_code", lambda: "AAAAAA")
+    tools.register_person("Existing")
+
+    monkeypatch.setattr(people_service, "generate_link_code", _colliding_then_real)
+    result = tools.register_person("NewPerson")
+
+    assert "error" not in result
+    assert result["link_code"] != "AAAAAA"
+    assert calls["n"] >= 2  # first attempt collided, a later one succeeded
+
+
 def test_duplicate_registration_is_rejected(fresh_db):
     tools = fresh_db
     tools.register_person("Alice")

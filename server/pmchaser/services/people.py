@@ -10,6 +10,21 @@ from pmchaser.integrations import telegram as telegram_integration
 from pmchaser.repositories import people as people_repo
 from pmchaser.serializers import person_summary
 
+# link_code has a UNIQUE constraint (models.py), and the alphabet is 36
+# chars over 6 positions (~2.18 billion combinations), so a collision on
+# any single attempt is already vanishingly unlikely - this bound exists
+# so a freak collision degrades to a clear error instead of an unhandled
+# IntegrityError crashing the call, per the refactor plan's finding #3.
+_MAX_LINK_CODE_ATTEMPTS = 5
+
+
+def _generate_unique_link_code(session) -> str | None:
+    for _ in range(_MAX_LINK_CODE_ATTEMPTS):
+        candidate = generate_link_code()
+        if people_repo.find_by_link_code(session, candidate) is None:
+            return candidate
+    return None
+
 
 def register_person(name: str, telegram_username: str | None = None, role: str = "team_member") -> dict:
     with db_base.session_scope() as session:
@@ -19,7 +34,12 @@ def register_person(name: str, telegram_username: str | None = None, role: str =
                 "error": f"'{name}' is already registered (person_id={existing.id})."
             }
 
-        link_code = generate_link_code()
+        link_code = _generate_unique_link_code(session)
+        if link_code is None:
+            return {
+                "error": f"Could not generate a unique link code after "
+                f"{_MAX_LINK_CODE_ATTEMPTS} attempts - please try again."
+            }
         person = Person(
             name=name.strip(),
             telegram_username=telegram_username,
@@ -45,7 +65,12 @@ def register_person(name: str, telegram_username: str | None = None, role: str =
 
 def list_people(role: str | None = None) -> list[dict]:
     with db_base.session_scope() as session:
-        return [person_summary(session, p) for p in people_repo.list_people(session, role=role)]
+        people = people_repo.list_people(session, role=role)
+        open_counts = people_repo.count_open_tasks_by_owner_ids(session, [p.id for p in people])
+        return [
+            person_summary(session, p, open_task_count=open_counts.get(p.id, 0))
+            for p in people
+        ]
 
 
 def delete_person(name: str) -> dict:

@@ -7,12 +7,14 @@ from __future__ import annotations
 from datetime import timedelta
 
 from pmchaser.db import base as db_base
-from pmchaser.db.models import CheckIn, Person, Task, UnmatchedMessage
-from pmchaser.domain.constants import CLOSED_STATUSES, DUPLICATE_TASK_WINDOW_MINUTES
+from pmchaser.db.models import CheckIn, Person, Task
+from pmchaser.domain.constants import DUPLICATE_TASK_WINDOW_MINUTES
 from pmchaser.domain.time_utils import parse_dt
 from pmchaser.domain.validation import validate_priority
+from pmchaser.repositories import checkins as checkins_repo
 from pmchaser.repositories import people as people_repo
 from pmchaser.repositories import tasks as tasks_repo
+from pmchaser.repositories import unmatched as unmatched_repo
 from pmchaser.serializers import task_summary
 
 
@@ -135,27 +137,25 @@ def list_tasks(
     due_soon_hours: int = 24,
 ) -> list[dict]:
     with db_base.session_scope() as session:
-        tasks = tasks_repo.list_all(session)
         now = db_base.utcnow()
-        wanted_owner = (owner_name or "").strip().lower()
 
-        results = []
-        for task in tasks:
-            if wanted_owner:
-                if not task.owner or task.owner.name.strip().lower() != wanted_owner:
-                    continue
-            if filter in ("active", "overdue", "due_soon") and task.status in CLOSED_STATUSES:
-                continue
-            if filter == "overdue":
-                if not task.deadline or task.deadline >= now:
-                    continue
-            elif filter == "due_soon":
-                if not task.deadline:
-                    continue
-                if not (now <= task.deadline <= now + timedelta(hours=due_soon_hours)):
-                    continue
-            results.append(task_summary(session, task, now))
-        return results
+        wanted_owner = (owner_name or "").strip()
+        owner_id = None
+        if wanted_owner:
+            owner = people_repo.find_by_name(session, wanted_owner)
+            if owner is None:
+                # No such person - nothing can match. Matches the
+                # original per-task owner-name check, which also matched
+                # zero tasks for an unregistered name.
+                return []
+            owner_id = owner.id
+
+        tasks = tasks_repo.list_filtered(session, filter, owner_id, due_soon_hours, now)
+        checkins_by_task = checkins_repo.checkins_by_task_ids(session, [t.id for t in tasks])
+        return [
+            task_summary(session, t, now, checkins=checkins_by_task.get(t.id, []))
+            for t in tasks
+        ]
 
 
 def update_task(
@@ -232,16 +232,14 @@ def delete_task(task_id: int) -> dict:
         if task is None:
             return {"error": f"No task with id {task_id}"}
         title = task.title
-        # NOTE (Phase 2 fix target, unchanged here for Phase 1 behavioral
-        # parity - see the refactor plan's finding #1): this LIKE match is
-        # a substring match against the JSON-encoded candidate_task_ids
-        # column, so deleting task 5 also deletes unmatched messages whose
-        # candidates are e.g. [15, 25, 51]. Left exactly as it was.
-        session.execute(
-            UnmatchedMessage.__table__.delete().where(
-                UnmatchedMessage.candidate_task_ids.like(f"%{task_id}%")
-            )
-        )
+        # Phase 2 fix (refactor plan finding #1): exact JSON-membership
+        # match instead of a substring LIKE - see
+        # pmchaser/repositories/unmatched.py's delete_referencing_task for
+        # why the original was wrong (it deleted unrelated messages whose
+        # candidate list merely contained this task_id as a substring,
+        # e.g. deleting task 5 also deleted a message with candidates
+        # [15, 25, 51]).
+        unmatched_repo.delete_referencing_task(session, task_id)
         session.execute(CheckIn.__table__.delete().where(CheckIn.task_id == task_id))
         session.delete(task)
         return {"deleted": True, "task_id": task_id, "title": title}

@@ -263,3 +263,44 @@ def test_delete_task_twice_errors(fresh_db):
     task_id = tools.create_task("Task", "Alice", "medium")["task_id"]
     tools.delete_task(task_id)
     assert "error" in tools.delete_task(task_id)
+
+
+def test_delete_task_uses_exact_match_not_substring_for_unmatched_cleanup(fresh_db, fake_telegram):
+    """Regression test for the refactor plan's finding #1: deleting task 1
+    must not delete an unmatched message whose real candidates are
+    [11, 21] just because "1" is a substring of both id's text form -
+    the original code matched with `candidate_task_ids.like(f"%{task_id}%")`
+    against the JSON-encoded column."""
+    from tests.helpers import link
+
+    tools = fresh_db
+    link(tools, fake_telegram, "Alice", "555001")
+
+    task_1 = tools.create_task("Target task", "Alice", "medium")["task_id"]
+    assert task_1 == 1
+
+    for i in range(9):
+        tools.create_task(f"Filler {i}", "Alice", "medium")
+    task_11 = tools.create_task("Task eleven", "Alice", "medium")["task_id"]
+    assert task_11 == 11
+
+    for i in range(9, 18):
+        tools.create_task(f"Filler {i}", "Alice", "medium")
+    task_21 = tools.create_task("Task twenty-one", "Alice", "medium")["task_id"]
+    assert task_21 == 21
+
+    tools.telegram_send_message("Alice", "ping 11", task_id=task_11)
+    tools.telegram_send_message("Alice", "ping 21", task_id=task_21)
+
+    fake_telegram.push("555001", "done with one of these")
+    unmatched = tools.telegram_get_updates()["unmatched"]
+    assert len(unmatched) == 1
+    assert set(unmatched[0]["candidate_task_ids"]) == {11, 21}
+
+    tools.delete_task(task_1)
+
+    fake_telegram.push("555001", "unrelated noise, just to poll again")
+    still_pending = tools.telegram_get_updates()["unmatched"]
+    # The message about tasks 11/21 must survive - task 1 was never a real
+    # candidate, only a substring of "11" and "21".
+    assert any(set(u["candidate_task_ids"]) == {11, 21} for u in still_pending)
