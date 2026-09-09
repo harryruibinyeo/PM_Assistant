@@ -5,15 +5,14 @@
 # with one checked-in, reproducible definition - same image, same port,
 # same database. Nothing about how the service actually runs changes.
 #
-# One service, not two: this branch (refactor/operations, off
-# refactor/production-grade) doesn't carry Phase 3's per-profile tool
-# split (pmchaser/mcp/profiles.py, PM_CHASER_TOOL_PROFILE) - that lives on
-# refactor/agent-prompts and is a separate, hermes-config-touching branch.
-# A single instance here still serves all 16 tools to both Hermes
-# profiles, exactly as production does today. If/when that branch's split
-# is adopted here too, this file gains a second `task-manager-bot` service
-# on its own port (:18174) alongside this one - see BRANCH_TESTING.md for
-# what that would look like.
+# Two services, not one: refactor/production-grade merges Phase 3's
+# per-profile tool split (pmchaser/mcp/profiles.py, PM_CHASER_TOOL_PROFILE)
+# in alongside this phase's operational work, so this file now matches
+# BRANCH_TESTING.md's Procedure B table - one instance per Hermes profile,
+# same image, same database, split only by which tools each advertises
+# and which port it listens on. `pmchaser-bot`'s service keeps the
+# `pm-chaser-mcp` container name and port :18173 (listener/chase_listener.py's
+# PEEK_URL is hardcoded to it); `task-manager-bot`'s is new, on :18174.
 #
 # `pm-chaser-data` is declared `external: true` below deliberately - it is
 # the SAME named volume the live deployment already writes to. Without
@@ -53,8 +52,31 @@ services:
     environment:
       PM_CHASER_PORT: "8000"
       PM_CHASER_DB_PATH: /data/pm_chaser.db
+      PM_CHASER_TOOL_PROFILE: pmchaser-bot
     ports:
       - "127.0.0.1:18173:8000"
+    volumes:
+      - pm-chaser-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  pm-chaser-mcp-task-manager:
+    build: ./server
+    image: pm-chaser-mcp:local
+    container_name: pm-chaser-mcp-task-manager
+    restart: always
+    env_file:
+      - server/.env
+    environment:
+      PM_CHASER_PORT: "8000"
+      PM_CHASER_DB_PATH: /data/pm_chaser.db
+      PM_CHASER_TOOL_PROFILE: task-manager-bot
+    ports:
+      - "127.0.0.1:18174:8000"
     volumes:
       - pm-chaser-data:/data
     healthcheck:
