@@ -143,8 +143,9 @@ def run_scenario(tools, fake_telegram, fake_manager_send: list[dict]) -> dict:
     )
     out["record_reply_outcome"] = tools.record_reply_outcome(
         out["create_task_for_reply_outcome"]["task_id"],
+        reply_text="Yep, submitted it this morning.",
         ack_text="Got it, marked as done - nice work.",
-        manager_note="Alice marked 'Submit vendor report' done.",
+        manager_note="Marked done.",
         status="done",
         progress_pct=100,
     )

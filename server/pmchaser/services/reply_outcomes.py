@@ -40,6 +40,7 @@ from pmchaser.services.tasks import update_task
 
 def record_reply_outcome(
     task_id: int,
+    reply_text: str,
     ack_text: str,
     manager_note: str,
     status: str | None = None,
@@ -52,6 +53,15 @@ def record_reply_outcome(
     Only call this when the reply genuinely was a status update. If it
     wasn't, don't call this at all - there is nothing to record, ack, or
     notify.
+
+    `reply_text` is the owner's own words, quoted verbatim in the manager
+    notification structurally - not left to manager_note to restate. Real
+    incident this closes: the manager reported never seeing what an
+    employee actually said, because manager_note was always a model-
+    authored paraphrase ("Henry marked X done") and nothing forced the
+    original text into it. Composing the quote here, in code, means the
+    manager sees Henry's real words on every call, not only on the calls
+    where the model happened to think to include them.
     """
     task_result = update_task(task_id, status=status, progress_pct=progress_pct)
     if "error" in task_result:
@@ -66,7 +76,14 @@ def record_reply_outcome(
         if owner_name
         else {"error": "Task has no resolvable owner_name - cannot send an acknowledgment."}
     )
-    manager_result = notify_manager(manager_note)
+
+    task_title = task_result.get("title")
+    quote_line = (
+        f'{owner_name} replied on "{task_title}": "{reply_text}"'
+        if owner_name
+        else f'Reply on "{task_title}": "{reply_text}"'
+    )
+    manager_result = notify_manager(f"{quote_line}\n\n{manager_note}")
 
     return {
         "task": task_result,

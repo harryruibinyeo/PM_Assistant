@@ -39,8 +39,9 @@ def test_updates_the_task_acks_the_owner_and_notifies_the_manager(fresh_db, fake
 
     result = tools.record_reply_outcome(
         task_id,
+        reply_text="Yep, wrapped it up this morning.",
         ack_text="Got it, marked as done - nice work.",
-        manager_note="Alice marked 'Submit report' done.",
+        manager_note="Marked done.",
         status="done",
         progress_pct=100,
     )
@@ -57,6 +58,32 @@ def test_updates_the_task_acks_the_owner_and_notifies_the_manager(fresh_db, fake
     assert result["manager_notification"]["to"] == "Bob"
 
 
+def test_manager_notification_quotes_the_reply_verbatim(fresh_db, fake_telegram, fake_manager_bot):
+    """The whole point of reply_text: the manager must see the owner's
+    actual words, not only the model's manager_note paraphrase - real
+    incident that motivated this, see reply_outcomes.py's module docstring."""
+    tools = fresh_db
+    manager = tools.register_person("Bob", role="manager")
+    fake_telegram.push("555099", f"/start {manager['link_code']}")
+    link(tools, fake_telegram, "Henry", "555001")
+    task_id = tools.create_task("Fix the report", "Henry", "medium")["task_id"]
+
+    tools.record_reply_outcome(
+        task_id,
+        reply_text="need until friday, waiting on finance",
+        ack_text="Got it, thanks for the update.",
+        manager_note="Now blocked - waiting on finance.",
+        status="blocked",
+    )
+
+    assert len(fake_manager_bot) == 1
+    sent_text = fake_manager_bot[0]["text"]
+    assert "Henry" in sent_text
+    assert "Fix the report" in sent_text
+    assert "need until friday, waiting on finance" in sent_text
+    assert "Now blocked - waiting on finance." in sent_text
+
+
 def test_invalid_task_id_returns_only_the_error_no_ack_or_notification(fresh_db, fake_telegram):
     """If the task lookup itself fails, there is nothing to acknowledge
     or notify about - attempting either would reference a task that was
@@ -67,6 +94,7 @@ def test_invalid_task_id_returns_only_the_error_no_ack_or_notification(fresh_db,
 
     result = tools.record_reply_outcome(
         99999,
+        reply_text="doesn't matter",
         ack_text="This should never be sent.",
         manager_note="This should never be sent either.",
         status="done",
@@ -88,7 +116,7 @@ def test_ack_never_creates_a_checkin_even_though_a_real_task_id_exists(fresh_db,
     task_id = tools.create_task("Task", "Alice", "medium")["task_id"]
 
     tools.record_reply_outcome(
-        task_id, ack_text="Thanks!", manager_note="Alice replied.", status="in_progress",
+        task_id, reply_text="on it", ack_text="Thanks!", manager_note="In progress.", status="in_progress",
     )
 
     task = tools.list_tasks(owner_name="Alice")[0]
@@ -107,8 +135,8 @@ def test_can_update_progress_only_without_changing_status(fresh_db, fake_telegra
     tools.update_task(task_id, status="in_progress")
 
     result = tools.record_reply_outcome(
-        task_id, ack_text="Thanks for the update!", manager_note="Alice: 50% done.",
-        progress_pct=50,
+        task_id, reply_text="50% done so far", ack_text="Thanks for the update!",
+        manager_note="50% done.", progress_pct=50,
     )
 
     assert result["task"]["status"] == "in_progress"  # unchanged

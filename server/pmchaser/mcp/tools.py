@@ -519,6 +519,7 @@ def notify_manager(text: str) -> dict:
 # ---------------------------------------------------------------------------
 def record_reply_outcome(
     task_id: int,
+    reply_text: str,
     ack_text: str,
     manager_note: str,
     status: str | None = None,
@@ -541,6 +542,11 @@ def record_reply_outcome(
 
     Args:
         task_id: The task the reply was about.
+        reply_text: The owner's reply, verbatim — exactly what they
+            typed, not your summary of it. This is quoted directly in the
+            manager notification (owner name, task title, and this quote
+            are assembled automatically) so the manager always sees the
+            employee's actual words, not only your interpretation of them.
         ack_text: A brief acknowledgment sent back to the task's owner —
             no more than one short line ("Got it, marked as done — nice
             work." / "Thanks — flagging that for Marcus to review, he'll
@@ -548,10 +554,11 @@ def record_reply_outcome(
             owner ever gets that their reply was actually read. Never
             reference a task_id here — this is not a chase, and doing so
             would create a new open check-in nobody is waiting on.
-        manager_note: A short line naming who replied, on which task, and
-            what changed ("Daniel marked 'Submit vendor report' done." /
-            "Priya's 'Clean up room' is now blocked — she said she's
-            waiting on the key.") — not a raw status dump.
+        manager_note: A short line on what changed, to go underneath the
+            automatically-quoted reply — e.g. "Marked done." / "Now
+            blocked — needs your decision on the deadline." Don't restate
+            who replied or on which task (the quote above it already
+            covers that); just the interpretation.
         status: "not_started", "in_progress", "blocked", "done", or
             "cancelled" — same values as update_task. If the reply asks
             for more time or a later deadline, never pass a status other
@@ -569,11 +576,13 @@ def record_reply_outcome(
             acknowledgment — check for a real checkin_id/telegram_message_id
             before treating it as sent, same proof-of-send discipline as
             every other send in this system.
-        manager_notification: notify_manager's real return value.
+        manager_notification: notify_manager's real return value, sent to
+            <owner> replied on "<task title>": "<reply_text>", followed
+            by manager_note on its own line.
     """
     return log_tool_call(
         "record_reply_outcome", _record_reply_outcome,
-        task_id, ack_text, manager_note, status=status, progress_pct=progress_pct,
+        task_id, reply_text, ack_text, manager_note, status=status, progress_pct=progress_pct,
     )
 
 

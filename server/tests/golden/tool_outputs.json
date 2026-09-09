@@ -548,7 +548,7 @@
   "notify_manager_fake_sent": [
     {
       "chat_id": "700001",
-      "text": "Alice marked 'Submit vendor report' done."
+      "text": "Alice replied on \"Submit vendor report\": \"Yep, submitted it this morning.\"\n\nMarked done."
     },
     {
       "chat_id": "700001",
