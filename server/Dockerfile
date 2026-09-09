@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # unchanged); the real implementation now lives in the pmchaser/ package
 # (see the Phase 1 structural refactor - the flat models.py/tools.py/
 # telegram_client.py this used to copy no longer exist).
-COPY main.py entrypoint.py ./
+COPY main.py entrypoint.py alembic.ini ./
 COPY pmchaser/ ./pmchaser/
 
 # The SQLite file lives on a mounted volume (see docker-compose.yml) so
