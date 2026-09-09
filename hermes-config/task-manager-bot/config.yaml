@@ -58,9 +58,8 @@ tools:
 # strips its schema bytes instead of just suppressing its nudges. Kept:
 # `skills`/`terminal` (used every meeting-minutes/bulk-upload run),
 # `clarify` (the ask-a-question mechanism rules 2/8/9 depend on), `web`
-# (no API key configured so it's currently a no-op, but the broad-PA-scope
-# decision explicitly wants research/quick-lookups in scope if one is ever
-# added), and `vision` (the photo-of-a-task-list path in rule 11 needs it —
+# (real Firecrawl backend as of rule 18 below — genuinely used now, not a
+# no-op), and `vision` (the photo-of-a-task-list path in rule 11 needs it —
 # see the image_input_mode note above, this model has real vision).
 agent:
   disabled_toolsets:
@@ -73,6 +72,14 @@ agent:
     - todo
     - file
     - memory
+# Rule 18 (research on request): Firecrawl handles both search and extract
+# in one backend (unlike the free ddgs default, which is search-only and
+# cannot read a page's actual content — confirmed directly in Hermes's own
+# tools/web_tools.py) — one API key covers "find articles" and "read this
+# one" without juggling two providers. FIRECRAWL_API_KEY lives in this
+# profile's own .env (untracked), free tier, no card on file.
+web:
+  backend: firecrawl
 onboarding:
   seen:
     profile_build_offered: true
